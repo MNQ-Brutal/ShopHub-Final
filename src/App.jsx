@@ -12,13 +12,14 @@ const STORE_COLORS = {
   'Whole Foods': 'bg-green-100 text-green-800',
 }
 
-const BLANK_FORM = { name: '', primaryStore: 'Walmart', category: 'Pantry', notes: '', secondaryStore: '' }
+const BLANK_FORM = { name: '', primaryStore: 'Walmart', category: 'Pantry', notes: '', secondaryStore: '', quantity: '' }
 const itemToForm = item => ({
   name: item.name,
   primaryStore: item.primaryStore,
   secondaryStore: item.secondaryStore || '',
   category: item.category,
   notes: item.notes || '',
+  quantity: item.quantity || '',
 })
 
 async function seedIfEmpty(db) {
@@ -125,6 +126,7 @@ export default function App() {
         secondaryStore: form.secondaryStore || null,
         category: form.category,
         notes: form.notes.trim() || null,
+        quantity: form.quantity.trim() || null,
       })
       setEditingItem(null)
     } else {
@@ -134,6 +136,7 @@ export default function App() {
         secondaryStore: form.secondaryStore || null,
         category: form.category,
         notes: form.notes.trim() || null,
+        quantity: form.quantity.trim() || null,
         active: true,
         checked: false,
       })
@@ -147,6 +150,10 @@ export default function App() {
     const batch = writeBatch(db)
     checked.forEach(i => batch.update(doc(db, 'items', i.id), { checked: false }))
     await batch.commit()
+  }
+
+  async function updateQuantity(item, quantity) {
+    await updateDoc(doc(db, 'items', item.id), { quantity: quantity.trim() || null })
   }
 
   function openContextMenu(item, x, y) {
@@ -324,10 +331,10 @@ export default function App() {
               </div>
               <div className="divide-y divide-gray-50">
                 {activeUnchecked.map(item => (
-                  <ItemRow key={item.id} item={item} onToggle={toggleCheck} onLongPress={openContextMenu} />
+                  <ItemRow key={item.id} item={item} onToggle={toggleCheck} onLongPress={openContextMenu} onUpdateQuantity={updateQuantity} />
                 ))}
                 {activeChecked.map(item => (
-                  <ItemRow key={item.id} item={item} onToggle={toggleCheck} onLongPress={openContextMenu} checked />
+                  <ItemRow key={item.id} item={item} onToggle={toggleCheck} onLongPress={openContextMenu} onUpdateQuantity={updateQuantity} checked />
                 ))}
                 {showInactive && inactive.length > 0 && (
                   <>
@@ -335,7 +342,7 @@ export default function App() {
                       <div className="px-4 py-1 bg-gray-50 text-xs text-gray-400 uppercase tracking-wide">Inactive</div>
                     )}
                     {inactive.map(item => (
-                      <ItemRow key={item.id} item={item} onToggle={toggleCheck} onLongPress={openContextMenu} inactive />
+                      <ItemRow key={item.id} item={item} onToggle={toggleCheck} onLongPress={openContextMenu} onUpdateQuantity={updateQuantity} inactive />
                     ))}
                   </>
                 )}
@@ -498,6 +505,16 @@ export default function App() {
                   <option value="">None</option>
                   {STORES.filter(s => s !== form.primaryStore).map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 font-medium mb-1 block">Quantity (optional)</label>
+                <input
+                  type="text"
+                  value={form.quantity}
+                  onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))}
+                  placeholder="e.g. 2, 1 lb, 3 cans"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-blue-400"
+                />
               </div>
               <div>
                 <label className="text-xs text-gray-500 font-medium mb-1 block">Notes (optional)</label>
@@ -750,8 +767,11 @@ export default function App() {
   )
 }
 
-function ItemRow({ item, onToggle, onLongPress, checked = false, inactive = false }) {
+function ItemRow({ item, onToggle, onLongPress, onUpdateQuantity, checked = false, inactive = false }) {
   const longPressTimer = useRef(null)
+  const [editingQty, setEditingQty] = useState(false)
+  const [qtyValue, setQtyValue] = useState(item.quantity || '')
+  const qtyInputRef = useRef(null)
 
   function handleTouchStart(e) {
     const touch = e.touches[0]
@@ -767,9 +787,23 @@ function ItemRow({ item, onToggle, onLongPress, checked = false, inactive = fals
     onLongPress(item, e.clientX, e.clientY)
   }
 
+  function openQtyEdit(e) {
+    e.stopPropagation()
+    setQtyValue(item.quantity || '')
+    setEditingQty(true)
+    setTimeout(() => qtyInputRef.current?.select(), 0)
+  }
+
+  function commitQty() {
+    setEditingQty(false)
+    if (qtyValue.trim() !== (item.quantity || '')) {
+      onUpdateQuantity(item, qtyValue)
+    }
+  }
+
   return (
     <div
-      className={`flex items-start gap-3 px-4 py-3 cursor-pointer active:bg-gray-50 transition-colors select-none ${
+      className={`flex items-center gap-3 px-4 py-3 cursor-pointer active:bg-gray-50 transition-colors select-none ${
         inactive ? 'opacity-40' : checked ? 'bg-gray-50/50' : ''
       }`}
       onClick={() => onToggle(item)}
@@ -778,7 +812,7 @@ function ItemRow({ item, onToggle, onLongPress, checked = false, inactive = fals
       onTouchEnd={handleTouchEnd}
       onTouchMove={handleTouchEnd}
     >
-      <div className={`mt-0.5 w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-colors ${
+      <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-colors ${
         checked ? 'bg-green-500 border-green-500' : 'border-gray-300 hover:border-gray-400'
       }`}>
         {checked && (
@@ -787,20 +821,51 @@ function ItemRow({ item, onToggle, onLongPress, checked = false, inactive = fals
           </svg>
         )}
       </div>
+
+      {/* Quantity badge — tap to edit */}
+      {editingQty ? (
+        <input
+          ref={qtyInputRef}
+          autoFocus
+          type="text"
+          value={qtyValue}
+          onChange={e => setQtyValue(e.target.value)}
+          onBlur={commitQty}
+          onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); commitQty() } }}
+          onClick={e => e.stopPropagation()}
+          onTouchStart={e => e.stopPropagation()}
+          placeholder="qty"
+          className="w-14 text-center text-sm font-medium text-blue-600 border border-blue-300 rounded-md px-1 py-0.5 focus:outline-none focus:border-blue-500 flex-shrink-0"
+        />
+      ) : (
+        <button
+          className={`flex-shrink-0 min-w-[2.5rem] text-center text-sm font-medium rounded-md px-1.5 py-0.5 transition-colors ${
+            item.quantity
+              ? 'text-blue-600 bg-blue-50 hover:bg-blue-100'
+              : 'text-gray-300 hover:text-blue-400 hover:bg-blue-50'
+          }`}
+          onClick={openQtyEdit}
+          onTouchStart={e => { e.stopPropagation(); clearTimeout(longPressTimer.current) }}
+          title="Set quantity"
+        >
+          {item.quantity || '—'}
+        </button>
+      )}
+
       <div className="flex-1 min-w-0">
         <p className={`text-sm leading-snug ${
           checked ? 'line-through text-gray-400' : inactive ? 'text-gray-500' : 'text-gray-800'
         }`}>
           {item.name}
         </p>
-        <div className="flex flex-wrap items-center gap-1.5 mt-1">
+        <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
           <span className="text-xs text-gray-400">{item.category}</span>
           {item.secondaryStore && (
             <span className="text-xs text-gray-400">· also {item.secondaryStore}</span>
           )}
         </div>
         {item.notes && (
-          <p className="text-xs text-amber-600 mt-1 italic">{item.notes}</p>
+          <p className="text-xs text-amber-600 mt-0.5 italic">{item.notes}</p>
         )}
       </div>
     </div>
