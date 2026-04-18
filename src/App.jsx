@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { collection, onSnapshot, doc, updateDoc, writeBatch, addDoc, query, getDocs } from 'firebase/firestore'
 import { db } from './firebase'
 import { STORES, CATEGORIES, SEED_ITEMS } from './seedData'
@@ -43,6 +43,10 @@ export default function App() {
 
   async function toggleCheck(item) {
     await updateDoc(doc(db, 'items', item.id), { checked: !item.checked })
+  }
+
+  async function toggleActive(item) {
+    await updateDoc(doc(db, 'items', item.id), { active: !item.active })
   }
 
   async function clearAll() {
@@ -147,7 +151,7 @@ export default function App() {
 
               <div className="divide-y divide-gray-50">
                 {activeUnchecked.map(item => (
-                  <ItemRow key={item.id} item={item} onToggle={toggleCheck} />
+                  <ItemRow key={item.id} item={item} onToggle={toggleCheck} onToggleActive={toggleActive} />
                 ))}
                 {activeChecked.map(item => (
                   <ItemRow key={item.id} item={item} onToggle={toggleCheck} checked />
@@ -171,13 +175,32 @@ export default function App() {
   )
 }
 
-function ItemRow({ item, onToggle, checked = false, inactive = false }) {
+function ItemRow({ item, onToggle, onToggleActive, checked = false, inactive = false }) {
+  const longPressTimer = useRef(null)
+
+  function handleTouchStart() {
+    longPressTimer.current = setTimeout(() => onToggleActive(item), 600)
+  }
+
+  function handleTouchEnd() {
+    clearTimeout(longPressTimer.current)
+  }
+
+  function handleContextMenu(e) {
+    e.preventDefault()
+    onToggleActive(item)
+  }
+
   return (
     <div
-      className={`flex items-start gap-3 px-4 py-3 cursor-pointer active:bg-gray-50 transition-colors ${
+      className={`flex items-start gap-3 px-4 py-3 cursor-pointer active:bg-gray-50 transition-colors select-none ${
         inactive ? 'opacity-40' : checked ? 'bg-gray-50/50' : ''
       }`}
       onClick={() => onToggle(item)}
+      onContextMenu={handleContextMenu}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      onTouchMove={handleTouchEnd}
     >
       <div className={`mt-0.5 w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-colors ${
         checked
