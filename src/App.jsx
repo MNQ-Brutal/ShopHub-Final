@@ -1,16 +1,21 @@
 import { useState, useEffect, useRef } from 'react'
 import { collection, onSnapshot, doc, updateDoc, deleteDoc, writeBatch, query, getDocs, addDoc, setDoc } from 'firebase/firestore'
 import { db } from './firebase'
-import { STORES, CATEGORIES, SEED_ITEMS } from './seedData'
+import { CATEGORIES, SEED_ITEMS, DEFAULT_STORES } from './seedData'
 
-const STORE_COLORS = {
-  'Walmart': 'bg-blue-100 text-blue-800',
-  'Kroger': 'bg-red-100 text-red-800',
-  'Albertsons': 'bg-orange-100 text-orange-800',
-  "Sam's Club": 'bg-indigo-100 text-indigo-800',
-  'Costco': 'bg-red-100 text-red-900',
-  'Whole Foods': 'bg-green-100 text-green-800',
-}
+const COLOR_OPTIONS = [
+  { label: 'Blue',   swatch: 'bg-blue-200',   classes: 'bg-blue-100 text-blue-800' },
+  { label: 'Red',    swatch: 'bg-red-200',     classes: 'bg-red-100 text-red-800' },
+  { label: 'Orange', swatch: 'bg-orange-200',  classes: 'bg-orange-100 text-orange-800' },
+  { label: 'Indigo', swatch: 'bg-indigo-200',  classes: 'bg-indigo-100 text-indigo-800' },
+  { label: 'Rose',   swatch: 'bg-rose-200',    classes: 'bg-rose-100 text-rose-900' },
+  { label: 'Green',  swatch: 'bg-green-200',   classes: 'bg-green-100 text-green-800' },
+  { label: 'Purple', swatch: 'bg-purple-200',  classes: 'bg-purple-100 text-purple-800' },
+  { label: 'Yellow', swatch: 'bg-yellow-200',  classes: 'bg-yellow-100 text-yellow-800' },
+  { label: 'Teal',   swatch: 'bg-teal-200',    classes: 'bg-teal-100 text-teal-800' },
+  { label: 'Pink',   swatch: 'bg-pink-200',    classes: 'bg-pink-100 text-pink-800' },
+  { label: 'Gray',   swatch: 'bg-gray-300',    classes: 'bg-gray-100 text-gray-700' },
+]
 
 const BLANK_FORM = { name: '', primaryStore: 'Walmart', category: 'Pantry', notes: '', secondaryStore: '', quantity: '' }
 const itemToForm = item => ({
@@ -33,10 +38,22 @@ async function seedIfEmpty(db) {
   await batch.commit()
 }
 
+async function seedStoresIfEmpty(db) {
+  const snap = await getDocs(query(collection(db, 'stores')))
+  if (!snap.empty) return
+  const batch = writeBatch(db)
+  for (const s of DEFAULT_STORES) {
+    batch.set(doc(collection(db, 'stores')), s)
+  }
+  await batch.commit()
+}
+
 export default function App() {
   const [items, setItems] = useState([])
   const [groups, setGroups] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [stores, setStores] = useState([])
+  const [itemsLoaded, setItemsLoaded] = useState(false)
+  const [storesLoaded, setStoresLoaded] = useState(false)
   const [filterStore, setFilterStore] = useState('All')
   const [filterCategory, setFilterCategory] = useState('All')
   const [showInactive, setShowInactive] = useState(false)
@@ -46,6 +63,13 @@ export default function App() {
   const [showAddForm, setShowAddForm] = useState(false)
   const [editingItem, setEditingItem] = useState(null)
   const [form, setForm] = useState(BLANK_FORM)
+
+  // Stores panel state
+  const [showStores, setShowStores] = useState(false)
+  const [showAddStoreForm, setShowAddStoreForm] = useState(false)
+  const [newStoreName, setNewStoreName] = useState('')
+  const [newStoreColor, setNewStoreColor] = useState(COLOR_OPTIONS[0].classes)
+  const [confirmDeleteStore, setConfirmDeleteStore] = useState(null)
 
   // Groups state
   const [showGroups, setShowGroups] = useState(false)
@@ -62,7 +86,17 @@ export default function App() {
     seedIfEmpty(db).then(() => {
       const unsub = onSnapshot(collection(db, 'items'), (snap) => {
         setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-        setLoading(false)
+        setItemsLoaded(true)
+      })
+      return unsub
+    })
+  }, [])
+
+  useEffect(() => {
+    seedStoresIfEmpty(db).then(() => {
+      const unsub = onSnapshot(collection(db, 'stores'), (snap) => {
+        setStores(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.order - b.order))
+        setStoresLoaded(true)
       })
       return unsub
     })
@@ -156,6 +190,38 @@ export default function App() {
     await updateDoc(doc(db, 'items', item.id), { quantity: quantity.trim() || null })
   }
 
+  function storeColor(storeName) {
+    return stores.find(s => s.name === storeName)?.color ?? 'bg-gray-100 text-gray-700'
+  }
+
+  // --- Store management ---
+
+  async function addStore() {
+    if (!newStoreName.trim()) return
+    const maxOrder = stores.reduce((max, s) => Math.max(max, s.order), 0)
+    await addDoc(collection(db, 'stores'), { name: newStoreName.trim(), color: newStoreColor, order: maxOrder + 1 })
+    setNewStoreName('')
+    setNewStoreColor(COLOR_OPTIONS[0].classes)
+    setShowAddStoreForm(false)
+  }
+
+  async function deleteStore(store) {
+    await deleteDoc(doc(db, 'stores', store.id))
+    setConfirmDeleteStore(null)
+  }
+
+  async function moveStore(store, direction) {
+    const sorted = [...stores]
+    const idx = sorted.findIndex(s => s.id === store.id)
+    const swapIdx = direction === 'up' ? idx - 1 : idx + 1
+    if (swapIdx < 0 || swapIdx >= sorted.length) return
+    const swapStore = sorted[swapIdx]
+    const batch = writeBatch(db)
+    batch.update(doc(db, 'stores', store.id), { order: swapStore.order })
+    batch.update(doc(db, 'stores', swapStore.id), { order: store.order })
+    await batch.commit()
+  }
+
   function openContextMenu(item, x, y) {
     setContextMenu({ item, x, y })
   }
@@ -226,7 +292,8 @@ export default function App() {
     await updateDoc(doc(db, 'groups', group.id), { items: updated })
   }
 
-  const activeStores = filterStore === 'All' ? STORES : [filterStore]
+  const storeNames = stores.map(s => s.name)
+  const activeStores = filterStore === 'All' ? storeNames : [filterStore]
 
   const visibleItems = items.filter(item => {
     if (filterStore !== 'All' && item.primaryStore !== filterStore) return false
@@ -237,7 +304,7 @@ export default function App() {
   const checkedCount = items.filter(i => i.checked && i.active).length
   const totalActive = items.filter(i => i.active).length
 
-  if (loading) {
+  if (!itemsLoaded || !storesLoaded) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-gray-400 text-lg">Loading list...</div>
@@ -265,6 +332,12 @@ export default function App() {
                 </button>
               )}
               <button
+                onClick={() => setShowStores(true)}
+                className="text-sm bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-lg transition-colors font-medium"
+              >
+                Stores
+              </button>
+              <button
                 onClick={() => setShowGroups(true)}
                 className="text-sm bg-purple-100 hover:bg-purple-200 text-purple-700 px-3 py-1.5 rounded-lg transition-colors font-medium"
               >
@@ -286,7 +359,7 @@ export default function App() {
               className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-700 flex-shrink-0"
             >
               <option value="All">All Stores</option>
-              {STORES.map(s => <option key={s} value={s}>{s}</option>)}
+              {storeNames.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
             <select
               value={filterCategory}
@@ -323,7 +396,7 @@ export default function App() {
 
           return (
             <div key={store} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-              <div className={`px-4 py-2.5 flex items-center gap-2 ${STORE_COLORS[store]}`}>
+              <div className={`px-4 py-2.5 flex items-center gap-2 ${storeColor(store)}`}>
                 <span className="font-semibold text-sm">{store}</span>
                 <span className="text-xs opacity-60 ml-auto">
                   {activeChecked.length}/{activeUnchecked.length + activeChecked.length}
@@ -415,7 +488,7 @@ export default function App() {
               <p className="font-medium text-gray-900 text-sm truncate">{storePicker.name}</p>
               <p className="text-xs text-gray-400 mt-0.5">Currently: {storePicker.primaryStore}</p>
             </div>
-            {STORES.map(store => (
+            {storeNames.map(store => (
               <button
                 key={store}
                 className={`w-full text-left px-4 py-3.5 text-sm border-b border-gray-50 transition-colors ${
@@ -482,7 +555,7 @@ export default function App() {
                   onChange={e => setForm(f => ({ ...f, primaryStore: e.target.value }))}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-blue-400"
                 >
-                  {STORES.map(s => <option key={s} value={s}>{s}</option>)}
+                  {storeNames.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
               <div>
@@ -503,7 +576,7 @@ export default function App() {
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-blue-400"
                 >
                   <option value="">None</option>
-                  {STORES.filter(s => s !== form.primaryStore).map(s => <option key={s} value={s}>{s}</option>)}
+                  {storeNames.filter(s => s !== form.primaryStore).map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
               <div>
@@ -540,6 +613,121 @@ export default function App() {
               >
                 {editingItem ? 'Save Changes' : 'Add Item'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Stores Panel */}
+      {showStores && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40"
+          onClick={() => { setShowStores(false); setShowAddStoreForm(false) }}
+        >
+          <div
+            className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm shadow-2xl flex flex-col"
+            style={{ maxHeight: '80vh' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
+              <p className="font-semibold text-gray-900">Manage Stores</p>
+              <button className="text-gray-400 text-xl leading-none" onClick={() => { setShowStores(false); setShowAddStoreForm(false) }}>×</button>
+            </div>
+
+            <div className="overflow-y-auto flex-1">
+              {stores.map((store, idx) => (
+                <div key={store.id} className="flex items-center gap-3 px-4 py-3 border-b border-gray-50">
+                  <span className={`w-4 h-4 rounded-full flex-shrink-0 ${COLOR_OPTIONS.find(c => c.classes === store.color)?.swatch ?? 'bg-gray-300'}`} />
+                  <span className="flex-1 text-sm text-gray-800">{store.name}</span>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <button
+                      className="text-gray-300 hover:text-gray-600 px-1.5 py-1 rounded transition-colors disabled:opacity-20"
+                      onClick={() => moveStore(store, 'up')}
+                      disabled={idx === 0}
+                      title="Move up"
+                    >↑</button>
+                    <button
+                      className="text-gray-300 hover:text-gray-600 px-1.5 py-1 rounded transition-colors disabled:opacity-20"
+                      onClick={() => moveStore(store, 'down')}
+                      disabled={idx === stores.length - 1}
+                      title="Move down"
+                    >↓</button>
+                    <button
+                      className="text-gray-300 hover:text-red-400 px-1.5 py-1 rounded hover:bg-red-50 transition-colors text-sm"
+                      onClick={() => setConfirmDeleteStore(store)}
+                      title="Delete"
+                    >🗑</button>
+                  </div>
+                </div>
+              ))}
+
+              {/* Add store form */}
+              {showAddStoreForm && (
+                <div className="px-4 py-3 space-y-3 border-t border-gray-100">
+                  <input
+                    autoFocus
+                    type="text"
+                    placeholder="Store name"
+                    value={newStoreName}
+                    onChange={e => setNewStoreName(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') addStore(); if (e.key === 'Escape') setShowAddStoreForm(false) }}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-blue-400"
+                  />
+                  <div>
+                    <p className="text-xs text-gray-500 font-medium mb-2">Color</p>
+                    <div className="flex flex-wrap gap-2">
+                      {COLOR_OPTIONS.map(opt => (
+                        <button
+                          key={opt.label}
+                          title={opt.label}
+                          className={`w-7 h-7 rounded-full ${opt.swatch} transition-transform ${newStoreColor === opt.classes ? 'ring-2 ring-offset-1 ring-gray-500 scale-110' : 'hover:scale-110'}`}
+                          onClick={() => setNewStoreColor(opt.classes)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      className="flex-1 py-2 text-sm text-gray-500 hover:bg-gray-100 rounded-lg transition-colors"
+                      onClick={() => { setShowAddStoreForm(false); setNewStoreName('') }}
+                    >Cancel</button>
+                    <button
+                      className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors ${
+                        newStoreName.trim() ? 'bg-blue-500 hover:bg-blue-600 text-white' : 'bg-gray-100 text-gray-300'
+                      }`}
+                      onClick={addStore}
+                      disabled={!newStoreName.trim()}
+                    >Add Store</button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="border-t border-gray-100 px-4 py-3 flex-shrink-0">
+              <button
+                className="w-full py-2.5 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-xl transition-colors"
+                onClick={() => setShowAddStoreForm(true)}
+              >
+                + Add Store
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Store Confirm */}
+      {confirmDeleteStore && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-6" onClick={() => setConfirmDeleteStore(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-5">
+              <p className="font-semibold text-gray-900 text-base">Delete store?</p>
+              <p className="text-sm text-gray-500 mt-1 leading-snug">
+                "{confirmDeleteStore.name}" will be removed. Items assigned to it won't be deleted but won't appear under any store section.
+              </p>
+            </div>
+            <div className="flex border-t border-gray-100">
+              <button className="flex-1 py-3.5 text-sm text-gray-500 hover:bg-gray-50 transition-colors" onClick={() => setConfirmDeleteStore(null)}>Cancel</button>
+              <button className="flex-1 py-3.5 text-sm font-medium text-red-500 hover:bg-red-50 transition-colors border-l border-gray-100" onClick={() => deleteStore(confirmDeleteStore)}>Delete</button>
             </div>
           </div>
         </div>
@@ -661,7 +849,7 @@ export default function App() {
                               onChange={e => setGroupItemForm(f => ({ ...f, primaryStore: e.target.value }))}
                               className="flex-1 border border-gray-200 rounded-lg px-2 py-2 text-sm text-gray-700 focus:outline-none focus:border-purple-400"
                             >
-                              {STORES.map(s => <option key={s} value={s}>{s}</option>)}
+                              {storeNames.map(s => <option key={s} value={s}>{s}</option>)}
                             </select>
                             <select
                               value={groupItemForm.category}
