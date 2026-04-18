@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { collection, onSnapshot, doc, updateDoc, writeBatch, addDoc, query, getDocs } from 'firebase/firestore'
+import { collection, onSnapshot, doc, updateDoc, writeBatch, query, getDocs } from 'firebase/firestore'
 import { db } from './firebase'
 import { STORES, CATEGORIES, SEED_ITEMS } from './seedData'
 
@@ -13,8 +13,7 @@ const STORE_COLORS = {
 }
 
 async function seedIfEmpty(db) {
-  const q = query(collection(db, 'items'))
-  const snap = await getDocs(q)
+  const snap = await getDocs(query(collection(db, 'items')))
   if (!snap.empty) return
   const batch = writeBatch(db)
   for (const item of SEED_ITEMS) {
@@ -30,6 +29,8 @@ export default function App() {
   const [filterStore, setFilterStore] = useState('All')
   const [filterCategory, setFilterCategory] = useState('All')
   const [showInactive, setShowInactive] = useState(false)
+  const [contextMenu, setContextMenu] = useState(null) // { item, x, y }
+  const [storePicker, setStorePicker] = useState(null) // item
 
   useEffect(() => {
     seedIfEmpty(db).then(() => {
@@ -41,12 +42,26 @@ export default function App() {
     })
   }, [])
 
+  useEffect(() => {
+    if (!contextMenu) return
+    function dismiss() { setContextMenu(null) }
+    window.addEventListener('click', dismiss)
+    window.addEventListener('scroll', dismiss)
+    return () => { window.removeEventListener('click', dismiss); window.removeEventListener('scroll', dismiss) }
+  }, [contextMenu])
+
   async function toggleCheck(item) {
     await updateDoc(doc(db, 'items', item.id), { checked: !item.checked })
   }
 
   async function toggleActive(item) {
     await updateDoc(doc(db, 'items', item.id), { active: !item.active })
+    setContextMenu(null)
+  }
+
+  async function changeStore(item, newStore) {
+    await updateDoc(doc(db, 'items', item.id), { primaryStore: newStore })
+    setStorePicker(null)
   }
 
   async function clearAll() {
@@ -54,6 +69,10 @@ export default function App() {
     const batch = writeBatch(db)
     checked.forEach(i => batch.update(doc(db, 'items', i.id), { checked: false }))
     await batch.commit()
+  }
+
+  function openContextMenu(item, x, y) {
+    setContextMenu({ item, x, y })
   }
 
   const activeStores = filterStore === 'All' ? STORES : [filterStore]
@@ -95,8 +114,7 @@ export default function App() {
             )}
           </div>
 
-          {/* Filters */}
-          <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+          <div className="flex gap-2 overflow-x-auto pb-1">
             <select
               value={filterStore}
               onChange={e => setFilterStore(e.target.value)}
@@ -116,9 +134,7 @@ export default function App() {
             <button
               onClick={() => setShowInactive(v => !v)}
               className={`text-sm px-3 py-1.5 rounded-lg flex-shrink-0 transition-colors ${
-                showInactive
-                  ? 'bg-gray-700 text-white'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                showInactive ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
               }`}
             >
               {showInactive ? 'Hide Inactive' : 'Show Inactive'}
@@ -148,21 +164,20 @@ export default function App() {
                   {activeChecked.length}/{activeUnchecked.length + activeChecked.length}
                 </span>
               </div>
-
               <div className="divide-y divide-gray-50">
                 {activeUnchecked.map(item => (
-                  <ItemRow key={item.id} item={item} onToggle={toggleCheck} onToggleActive={toggleActive} />
+                  <ItemRow key={item.id} item={item} onToggle={toggleCheck} onLongPress={openContextMenu} />
                 ))}
                 {activeChecked.map(item => (
-                  <ItemRow key={item.id} item={item} onToggle={toggleCheck} checked />
+                  <ItemRow key={item.id} item={item} onToggle={toggleCheck} onLongPress={openContextMenu} checked />
                 ))}
                 {showInactive && inactive.length > 0 && (
                   <>
-                    {inactive.length > 0 && (activeUnchecked.length > 0 || activeChecked.length > 0) && (
+                    {(activeUnchecked.length > 0 || activeChecked.length > 0) && (
                       <div className="px-4 py-1 bg-gray-50 text-xs text-gray-400 uppercase tracking-wide">Inactive</div>
                     )}
                     {inactive.map(item => (
-                      <ItemRow key={item.id} item={item} onToggle={toggleCheck} inactive />
+                      <ItemRow key={item.id} item={item} onToggle={toggleCheck} onLongPress={openContextMenu} inactive />
                     ))}
                   </>
                 )}
@@ -171,15 +186,70 @@ export default function App() {
           )
         })}
       </div>
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <div
+          className="fixed z-50 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden min-w-48"
+          style={{ top: contextMenu.y, left: Math.min(contextMenu.x, window.innerWidth - 200) }}
+          onClick={e => e.stopPropagation()}
+        >
+          <div className="px-4 py-2.5 border-b border-gray-50">
+            <p className="text-xs font-medium text-gray-500 truncate">{contextMenu.item.name}</p>
+          </div>
+          <button
+            className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+            onClick={() => toggleActive(contextMenu.item)}
+          >
+            {contextMenu.item.active ? '🔕 Mark Inactive' : '✅ Mark Active'}
+          </button>
+          <button
+            className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition-colors border-t border-gray-50"
+            onClick={() => { setStorePicker(contextMenu.item); setContextMenu(null) }}
+          >
+            🏪 Change Store
+          </button>
+        </div>
+      )}
+
+      {/* Store Picker Modal */}
+      {storePicker && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40" onClick={() => setStorePicker(null)}>
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-gray-100">
+              <p className="font-medium text-gray-900 text-sm truncate">{storePicker.name}</p>
+              <p className="text-xs text-gray-400 mt-0.5">Currently: {storePicker.primaryStore}</p>
+            </div>
+            {STORES.map(store => (
+              <button
+                key={store}
+                className={`w-full text-left px-4 py-3.5 text-sm border-b border-gray-50 transition-colors ${
+                  store === storePicker.primaryStore
+                    ? 'bg-gray-50 text-gray-400'
+                    : 'text-gray-700 hover:bg-gray-50'
+                }`}
+                onClick={() => changeStore(storePicker, store)}
+                disabled={store === storePicker.primaryStore}
+              >
+                {store === storePicker.primaryStore ? `${store} (current)` : store}
+              </button>
+            ))}
+            <button className="w-full px-4 py-3.5 text-sm text-gray-400 hover:bg-gray-50" onClick={() => setStorePicker(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-function ItemRow({ item, onToggle, onToggleActive, checked = false, inactive = false }) {
+function ItemRow({ item, onToggle, onLongPress, checked = false, inactive = false }) {
   const longPressTimer = useRef(null)
 
-  function handleTouchStart() {
-    longPressTimer.current = setTimeout(() => onToggleActive(item), 600)
+  function handleTouchStart(e) {
+    const touch = e.touches[0]
+    longPressTimer.current = setTimeout(() => onLongPress(item, touch.clientX, touch.clientY), 600)
   }
 
   function handleTouchEnd() {
@@ -188,7 +258,7 @@ function ItemRow({ item, onToggle, onToggleActive, checked = false, inactive = f
 
   function handleContextMenu(e) {
     e.preventDefault()
-    onToggleActive(item)
+    onLongPress(item, e.clientX, e.clientY)
   }
 
   return (
@@ -203,9 +273,7 @@ function ItemRow({ item, onToggle, onToggleActive, checked = false, inactive = f
       onTouchMove={handleTouchEnd}
     >
       <div className={`mt-0.5 w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-colors ${
-        checked
-          ? 'bg-green-500 border-green-500'
-          : 'border-gray-300 hover:border-gray-400'
+        checked ? 'bg-green-500 border-green-500' : 'border-gray-300 hover:border-gray-400'
       }`}>
         {checked && (
           <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
@@ -213,7 +281,6 @@ function ItemRow({ item, onToggle, onToggleActive, checked = false, inactive = f
           </svg>
         )}
       </div>
-
       <div className="flex-1 min-w-0">
         <p className={`text-sm leading-snug ${
           checked ? 'line-through text-gray-400' : inactive ? 'text-gray-500' : 'text-gray-800'
