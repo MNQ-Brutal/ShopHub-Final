@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { collection, onSnapshot, doc, updateDoc, writeBatch, query, getDocs } from 'firebase/firestore'
+import { collection, onSnapshot, doc, updateDoc, deleteDoc, writeBatch, query, getDocs, addDoc } from 'firebase/firestore'
 import { db } from './firebase'
 import { STORES, CATEGORIES, SEED_ITEMS } from './seedData'
 
@@ -11,6 +11,8 @@ const STORE_COLORS = {
   'Costco': 'bg-red-100 text-red-900',
   'Whole Foods': 'bg-green-100 text-green-800',
 }
+
+const BLANK_FORM = { name: '', primaryStore: 'Walmart', category: 'Pantry', notes: '', secondaryStore: '' }
 
 async function seedIfEmpty(db) {
   const snap = await getDocs(query(collection(db, 'items')))
@@ -31,6 +33,9 @@ export default function App() {
   const [showInactive, setShowInactive] = useState(false)
   const [contextMenu, setContextMenu] = useState(null) // { item, x, y }
   const [storePicker, setStorePicker] = useState(null) // item
+  const [confirmDelete, setConfirmDelete] = useState(null) // item
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [form, setForm] = useState(BLANK_FORM)
 
   useEffect(() => {
     seedIfEmpty(db).then(() => {
@@ -62,6 +67,26 @@ export default function App() {
   async function changeStore(item, newStore) {
     await updateDoc(doc(db, 'items', item.id), { primaryStore: newStore })
     setStorePicker(null)
+  }
+
+  async function deleteItem(item) {
+    await deleteDoc(doc(db, 'items', item.id))
+    setConfirmDelete(null)
+  }
+
+  async function addItem() {
+    if (!form.name.trim()) return
+    await addDoc(collection(db, 'items'), {
+      name: form.name.trim(),
+      primaryStore: form.primaryStore,
+      secondaryStore: form.secondaryStore || null,
+      category: form.category,
+      notes: form.notes.trim() || null,
+      active: true,
+      checked: false,
+    })
+    setForm(BLANK_FORM)
+    setShowAddForm(false)
   }
 
   async function clearAll() {
@@ -104,14 +129,22 @@ export default function App() {
               <h1 className="text-xl font-bold text-gray-900">Shopping List</h1>
               <p className="text-xs text-gray-400 mt-0.5">{checkedCount} of {totalActive} active items checked</p>
             </div>
-            {checkedCount > 0 && (
+            <div className="flex items-center gap-2">
+              {checkedCount > 0 && (
+                <button
+                  onClick={clearAll}
+                  className="text-sm bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-lg transition-colors"
+                >
+                  Clear All ✓
+                </button>
+              )}
               <button
-                onClick={clearAll}
-                className="text-sm bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-lg transition-colors"
+                onClick={() => setShowAddForm(true)}
+                className="text-sm bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg transition-colors font-medium"
               >
-                Clear All ✓
+                + Add
               </button>
-            )}
+            </div>
           </div>
 
           <div className="flex gap-2 overflow-x-auto pb-1">
@@ -209,6 +242,12 @@ export default function App() {
           >
             🏪 Change Store
           </button>
+          <button
+            className="w-full text-left px-4 py-3 text-sm text-red-500 hover:bg-red-50 transition-colors border-t border-gray-50"
+            onClick={() => { setConfirmDelete(contextMenu.item); setContextMenu(null) }}
+          >
+            🗑 Delete Item
+          </button>
         </div>
       )}
 
@@ -224,9 +263,7 @@ export default function App() {
               <button
                 key={store}
                 className={`w-full text-left px-4 py-3.5 text-sm border-b border-gray-50 transition-colors ${
-                  store === storePicker.primaryStore
-                    ? 'bg-gray-50 text-gray-400'
-                    : 'text-gray-700 hover:bg-gray-50'
+                  store === storePicker.primaryStore ? 'bg-gray-50 text-gray-400' : 'text-gray-700 hover:bg-gray-50'
                 }`}
                 onClick={() => changeStore(storePicker, store)}
                 disabled={store === storePicker.primaryStore}
@@ -237,6 +274,107 @@ export default function App() {
             <button className="w-full px-4 py-3.5 text-sm text-gray-400 hover:bg-gray-50" onClick={() => setStorePicker(null)}>
               Cancel
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirm Modal */}
+      {confirmDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-6" onClick={() => setConfirmDelete(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-5">
+              <p className="font-semibold text-gray-900 text-base">Delete item?</p>
+              <p className="text-sm text-gray-500 mt-1 leading-snug">"{confirmDelete.name}" will be permanently removed.</p>
+            </div>
+            <div className="flex border-t border-gray-100">
+              <button className="flex-1 py-3.5 text-sm text-gray-500 hover:bg-gray-50 transition-colors" onClick={() => setConfirmDelete(null)}>
+                Cancel
+              </button>
+              <button className="flex-1 py-3.5 text-sm font-medium text-red-500 hover:bg-red-50 transition-colors border-l border-gray-100" onClick={() => deleteItem(confirmDelete)}>
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Item Modal */}
+      {showAddForm && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40" onClick={() => setShowAddForm(false)}>
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+              <p className="font-semibold text-gray-900">Add Item</p>
+              <button className="text-gray-400 text-xl leading-none" onClick={() => setShowAddForm(false)}>×</button>
+            </div>
+            <div className="px-4 py-4 space-y-3">
+              <div>
+                <label className="text-xs text-gray-500 font-medium mb-1 block">Item name *</label>
+                <input
+                  autoFocus
+                  type="text"
+                  value={form.name}
+                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                  onKeyDown={e => e.key === 'Enter' && addItem()}
+                  placeholder="e.g. Organic Apples"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-blue-400"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 font-medium mb-1 block">Store</label>
+                <select
+                  value={form.primaryStore}
+                  onChange={e => setForm(f => ({ ...f, primaryStore: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-blue-400"
+                >
+                  {STORES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 font-medium mb-1 block">Category</label>
+                <select
+                  value={form.category}
+                  onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-blue-400"
+                >
+                  {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 font-medium mb-1 block">Also at (optional)</label>
+                <select
+                  value={form.secondaryStore}
+                  onChange={e => setForm(f => ({ ...f, secondaryStore: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-blue-400"
+                >
+                  <option value="">None</option>
+                  {STORES.filter(s => s !== form.primaryStore).map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 font-medium mb-1 block">Notes (optional)</label>
+                <input
+                  type="text"
+                  value={form.notes}
+                  onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+                  placeholder="e.g. check the date"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-blue-400"
+                />
+              </div>
+            </div>
+            <div className="flex border-t border-gray-100">
+              <button className="flex-1 py-3.5 text-sm text-gray-500 hover:bg-gray-50 transition-colors" onClick={() => setShowAddForm(false)}>
+                Cancel
+              </button>
+              <button
+                className={`flex-1 py-3.5 text-sm font-medium transition-colors border-l border-gray-100 ${
+                  form.name.trim() ? 'text-blue-500 hover:bg-blue-50' : 'text-gray-300'
+                }`}
+                onClick={addItem}
+                disabled={!form.name.trim()}
+              >
+                Add Item
+              </button>
+            </div>
           </div>
         </div>
       )}
