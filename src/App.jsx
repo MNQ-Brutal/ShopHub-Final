@@ -224,7 +224,10 @@ export default function App() {
       {contextMenu && (
         <div
           className="fixed z-50 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden min-w-48"
-          style={{ top: contextMenu.y, left: Math.min(contextMenu.x, window.innerWidth - 200) }}
+          style={{
+            top: contextMenu.y + 180 > window.innerHeight ? contextMenu.y - 180 : contextMenu.y,
+            left: Math.min(contextMenu.x, window.innerWidth - 200)
+          }}
           onClick={e => e.stopPropagation()}
         >
           <div className="px-4 py-2.5 border-b border-gray-50">
