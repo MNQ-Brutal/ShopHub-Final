@@ -64,7 +64,13 @@ export default function App() {
   }, [contextMenu])
 
   async function toggleCheck(item) {
-    await updateDoc(doc(db, 'items', item.id), { checked: !item.checked })
+    const updates = { checked: !item.checked }
+    if (!item.checked && item.pushed) {
+      updates.primaryStore = item.secondaryStore
+      updates.secondaryStore = item.primaryStore
+      updates.pushed = false
+    }
+    await updateDoc(doc(db, 'items', item.id), updates)
   }
 
   async function toggleActive(item) {
@@ -75,6 +81,15 @@ export default function App() {
   async function changeStore(item, newStore) {
     await updateDoc(doc(db, 'items', item.id), { primaryStore: newStore })
     setStorePicker(null)
+  }
+
+  async function pushToAlternate(item) {
+    await updateDoc(doc(db, 'items', item.id), {
+      primaryStore: item.secondaryStore,
+      secondaryStore: item.primaryStore,
+      pushed: true,
+    })
+    setContextMenu(null)
   }
 
   async function deleteItem(item) {
@@ -258,6 +273,14 @@ export default function App() {
           >
             {contextMenu.item.active ? '🔕 Mark Inactive' : '✅ Mark Active'}
           </button>
+          {contextMenu.item.secondaryStore && (
+            <button
+              className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition-colors border-t border-gray-50"
+              onClick={() => pushToAlternate(contextMenu.item)}
+            >
+              ➡️ Not here — try {contextMenu.item.secondaryStore}
+            </button>
+          )}
           <button
             className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition-colors border-t border-gray-50"
             onClick={() => { setEditingItem(contextMenu.item); setForm(itemToForm(contextMenu.item)); setShowAddForm(true); setContextMenu(null) }}
