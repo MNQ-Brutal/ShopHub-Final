@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { collection, onSnapshot, doc, updateDoc, deleteDoc, writeBatch, query, getDocs, addDoc } from 'firebase/firestore'
+import { collection, onSnapshot, doc, updateDoc, deleteDoc, writeBatch, query, getDocs, addDoc, setDoc } from 'firebase/firestore'
 import { db } from './firebase'
 import { STORES, CATEGORIES, SEED_ITEMS } from './seedData'
 
@@ -34,16 +34,28 @@ async function seedIfEmpty(db) {
 
 export default function App() {
   const [items, setItems] = useState([])
+  const [groups, setGroups] = useState([])
   const [loading, setLoading] = useState(true)
   const [filterStore, setFilterStore] = useState('All')
   const [filterCategory, setFilterCategory] = useState('All')
   const [showInactive, setShowInactive] = useState(false)
-  const [contextMenu, setContextMenu] = useState(null) // { item, x, y }
-  const [storePicker, setStorePicker] = useState(null) // item
-  const [confirmDelete, setConfirmDelete] = useState(null) // item
+  const [contextMenu, setContextMenu] = useState(null)
+  const [storePicker, setStorePicker] = useState(null)
+  const [confirmDelete, setConfirmDelete] = useState(null)
   const [showAddForm, setShowAddForm] = useState(false)
-  const [editingItem, setEditingItem] = useState(null) // item being edited
+  const [editingItem, setEditingItem] = useState(null)
   const [form, setForm] = useState(BLANK_FORM)
+
+  // Groups state
+  const [showGroups, setShowGroups] = useState(false)
+  const [expandedGroupId, setExpandedGroupId] = useState(null)
+  const [showNewGroupForm, setShowNewGroupForm] = useState(false)
+  const [newGroupName, setNewGroupName] = useState('')
+  const [addingItemToGroup, setAddingItemToGroup] = useState(null) // group id
+  const [groupItemForm, setGroupItemForm] = useState(BLANK_FORM)
+  const [confirmDeleteGroup, setConfirmDeleteGroup] = useState(null)
+  const [editingGroupName, setEditingGroupName] = useState(null) // { group, name }
+  const [activatedGroup, setActivatedGroup] = useState(null) // group name for toast
 
   useEffect(() => {
     seedIfEmpty(db).then(() => {
@@ -53,6 +65,13 @@ export default function App() {
       })
       return unsub
     })
+  }, [])
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'groups'), (snap) => {
+      setGroups(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+    })
+    return unsub
   }, [])
 
   useEffect(() => {
@@ -134,6 +153,72 @@ export default function App() {
     setContextMenu({ item, x, y })
   }
 
+  // --- Group functions ---
+
+  async function activateGroup(group) {
+    const batch = writeBatch(db)
+    for (const gi of group.items || []) {
+      const match = items.find(i => i.name.toLowerCase() === gi.name.toLowerCase())
+      if (match) {
+        batch.update(doc(db, 'items', match.id), { active: true, checked: false })
+      } else {
+        const ref = doc(collection(db, 'items'))
+        batch.set(ref, {
+          name: gi.name.trim(),
+          primaryStore: gi.primaryStore,
+          secondaryStore: gi.secondaryStore || null,
+          category: gi.category,
+          notes: gi.notes || null,
+          active: true,
+          checked: false,
+        })
+      }
+    }
+    await batch.commit()
+    setActivatedGroup(group.name)
+    setTimeout(() => setActivatedGroup(null), 2500)
+    setShowGroups(false)
+  }
+
+  async function createGroup() {
+    if (!newGroupName.trim()) return
+    await addDoc(collection(db, 'groups'), { name: newGroupName.trim(), items: [] })
+    setNewGroupName('')
+    setShowNewGroupForm(false)
+  }
+
+  async function deleteGroup(group) {
+    await deleteDoc(doc(db, 'groups', group.id))
+    setConfirmDeleteGroup(null)
+    if (expandedGroupId === group.id) setExpandedGroupId(null)
+  }
+
+  async function saveGroupName(group, newName) {
+    if (!newName.trim() || newName.trim() === group.name) { setEditingGroupName(null); return }
+    await updateDoc(doc(db, 'groups', group.id), { name: newName.trim() })
+    setEditingGroupName(null)
+  }
+
+  async function addGroupItem(group) {
+    if (!groupItemForm.name.trim()) return
+    const newItem = {
+      name: groupItemForm.name.trim(),
+      primaryStore: groupItemForm.primaryStore,
+      secondaryStore: groupItemForm.secondaryStore || null,
+      category: groupItemForm.category,
+      notes: groupItemForm.notes.trim() || null,
+    }
+    const updated = [...(group.items || []), newItem]
+    await updateDoc(doc(db, 'groups', group.id), { items: updated })
+    setGroupItemForm(BLANK_FORM)
+    setAddingItemToGroup(null)
+  }
+
+  async function removeGroupItem(group, index) {
+    const updated = group.items.filter((_, i) => i !== index)
+    await updateDoc(doc(db, 'groups', group.id), { items: updated })
+  }
+
   const activeStores = filterStore === 'All' ? STORES : [filterStore]
 
   const visibleItems = items.filter(item => {
@@ -172,6 +257,12 @@ export default function App() {
                   Clear All ✓
                 </button>
               )}
+              <button
+                onClick={() => setShowGroups(true)}
+                className="text-sm bg-purple-100 hover:bg-purple-200 text-purple-700 px-3 py-1.5 rounded-lg transition-colors font-medium"
+              >
+                Groups
+              </button>
               <button
                 onClick={() => setShowAddForm(true)}
                 className="text-sm bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg transition-colors font-medium"
@@ -254,6 +345,13 @@ export default function App() {
         })}
       </div>
 
+      {/* Activated toast */}
+      {activatedGroup && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-gray-900 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg">
+          ✓ "{activatedGroup}" added to list
+        </div>
+      )}
+
       {/* Context Menu */}
       {contextMenu && (
         <div
@@ -329,7 +427,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Delete Confirm Modal */}
+      {/* Delete Item Confirm Modal */}
       {confirmDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-6" onClick={() => setConfirmDelete(null)}>
           <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -349,7 +447,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Add Item Modal */}
+      {/* Add / Edit Item Modal */}
       {showAddForm && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40" onClick={() => { setShowAddForm(false); setEditingItem(null); setForm(BLANK_FORM) }}>
           <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -424,6 +522,225 @@ export default function App() {
                 disabled={!form.name.trim()}
               >
                 {editingItem ? 'Save Changes' : 'Add Item'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Groups Panel */}
+      {showGroups && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40"
+          onClick={() => { setShowGroups(false); setExpandedGroupId(null); setShowNewGroupForm(false); setAddingItemToGroup(null) }}
+        >
+          <div
+            className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm shadow-2xl flex flex-col"
+            style={{ maxHeight: '85vh' }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Groups header */}
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
+              <p className="font-semibold text-gray-900">Shopping Groups</p>
+              <button
+                className="text-gray-400 text-xl leading-none"
+                onClick={() => { setShowGroups(false); setExpandedGroupId(null); setShowNewGroupForm(false); setAddingItemToGroup(null) }}
+              >×</button>
+            </div>
+
+            {/* Groups list */}
+            <div className="overflow-y-auto flex-1">
+              {groups.length === 0 && !showNewGroupForm && (
+                <div className="px-4 py-8 text-center text-gray-400 text-sm">
+                  No groups yet. Create one to get started.
+                </div>
+              )}
+
+              {groups.map(group => (
+                <div key={group.id} className="border-b border-gray-50">
+                  {/* Group row */}
+                  <div className="flex items-center gap-2 px-4 py-3">
+                    {editingGroupName?.group.id === group.id ? (
+                      <input
+                        autoFocus
+                        className="flex-1 text-sm text-gray-800 border border-gray-200 rounded-lg px-2 py-1 focus:outline-none focus:border-purple-400"
+                        value={editingGroupName.name}
+                        onChange={e => setEditingGroupName(s => ({ ...s, name: e.target.value }))}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') saveGroupName(group, editingGroupName.name)
+                          if (e.key === 'Escape') setEditingGroupName(null)
+                        }}
+                        onBlur={() => saveGroupName(group, editingGroupName.name)}
+                      />
+                    ) : (
+                      <button
+                        className="flex-1 text-left"
+                        onClick={() => setExpandedGroupId(expandedGroupId === group.id ? null : group.id)}
+                      >
+                        <span className="text-sm font-medium text-gray-800">{group.name}</span>
+                        <span className="text-xs text-gray-400 ml-2">{(group.items || []).length} items</span>
+                      </button>
+                    )}
+
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button
+                        className="text-xs text-purple-600 bg-purple-50 hover:bg-purple-100 px-2.5 py-1.5 rounded-lg font-medium transition-colors"
+                        onClick={() => activateGroup(group)}
+                        disabled={(group.items || []).length === 0}
+                      >
+                        Activate
+                      </button>
+                      <button
+                        className="text-gray-400 hover:text-gray-600 px-1.5 py-1.5 rounded-lg hover:bg-gray-100 transition-colors text-xs"
+                        onClick={() => setEditingGroupName({ group, name: group.name })}
+                        title="Rename"
+                      >
+                        ✏️
+                      </button>
+                      <button
+                        className="text-gray-400 hover:text-red-500 px-1.5 py-1.5 rounded-lg hover:bg-red-50 transition-colors text-xs"
+                        onClick={() => setConfirmDeleteGroup(group)}
+                        title="Delete"
+                      >
+                        🗑
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Expanded: items in group */}
+                  {expandedGroupId === group.id && (
+                    <div className="bg-gray-50 border-t border-gray-100">
+                      {(group.items || []).length === 0 && addingItemToGroup !== group.id && (
+                        <p className="px-5 py-3 text-xs text-gray-400 italic">No items yet.</p>
+                      )}
+                      {(group.items || []).map((gi, idx) => (
+                        <div key={idx} className="flex items-center gap-2 px-5 py-2.5 border-b border-gray-100 last:border-0">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-gray-700 truncate">{gi.name}</p>
+                            <p className="text-xs text-gray-400">{gi.primaryStore} · {gi.category}</p>
+                          </div>
+                          <button
+                            className="text-gray-300 hover:text-red-400 text-lg leading-none flex-shrink-0 transition-colors"
+                            onClick={() => removeGroupItem(group, idx)}
+                          >×</button>
+                        </div>
+                      ))}
+
+                      {/* Add item to group inline form */}
+                      {addingItemToGroup === group.id ? (
+                        <div className="px-4 py-3 space-y-2 border-t border-gray-100 bg-white">
+                          <input
+                            autoFocus
+                            type="text"
+                            placeholder="Item name *"
+                            value={groupItemForm.name}
+                            onChange={e => setGroupItemForm(f => ({ ...f, name: e.target.value }))}
+                            onKeyDown={e => e.key === 'Enter' && addGroupItem(group)}
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-purple-400"
+                          />
+                          <div className="flex gap-2">
+                            <select
+                              value={groupItemForm.primaryStore}
+                              onChange={e => setGroupItemForm(f => ({ ...f, primaryStore: e.target.value }))}
+                              className="flex-1 border border-gray-200 rounded-lg px-2 py-2 text-sm text-gray-700 focus:outline-none focus:border-purple-400"
+                            >
+                              {STORES.map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                            <select
+                              value={groupItemForm.category}
+                              onChange={e => setGroupItemForm(f => ({ ...f, category: e.target.value }))}
+                              className="flex-1 border border-gray-200 rounded-lg px-2 py-2 text-sm text-gray-700 focus:outline-none focus:border-purple-400"
+                            >
+                              {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                          </div>
+                          <input
+                            type="text"
+                            placeholder="Notes (optional)"
+                            value={groupItemForm.notes}
+                            onChange={e => setGroupItemForm(f => ({ ...f, notes: e.target.value }))}
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-purple-400"
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              className="flex-1 py-2 text-sm text-gray-500 hover:bg-gray-100 rounded-lg transition-colors"
+                              onClick={() => { setAddingItemToGroup(null); setGroupItemForm(BLANK_FORM) }}
+                            >Cancel</button>
+                            <button
+                              className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors ${
+                                groupItemForm.name.trim() ? 'bg-purple-500 hover:bg-purple-600 text-white' : 'bg-gray-100 text-gray-300'
+                              }`}
+                              onClick={() => addGroupItem(group)}
+                              disabled={!groupItemForm.name.trim()}
+                            >Add</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          className="w-full px-5 py-2.5 text-xs text-purple-600 hover:bg-purple-50 transition-colors text-left font-medium border-t border-gray-100"
+                          onClick={() => { setAddingItemToGroup(group.id); setGroupItemForm(BLANK_FORM) }}
+                        >
+                          + Add item to group
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {/* New group form */}
+              {showNewGroupForm && (
+                <div className="px-4 py-3 flex gap-2 border-t border-gray-100">
+                  <input
+                    autoFocus
+                    type="text"
+                    placeholder="Group name (e.g. Taco Night)"
+                    value={newGroupName}
+                    onChange={e => setNewGroupName(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') createGroup()
+                      if (e.key === 'Escape') { setShowNewGroupForm(false); setNewGroupName('') }
+                    }}
+                    className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-purple-400"
+                  />
+                  <button
+                    className={`px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
+                      newGroupName.trim() ? 'bg-purple-500 hover:bg-purple-600 text-white' : 'bg-gray-100 text-gray-300'
+                    }`}
+                    onClick={createGroup}
+                    disabled={!newGroupName.trim()}
+                  >Create</button>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="border-t border-gray-100 px-4 py-3 flex-shrink-0">
+              <button
+                className="w-full py-2.5 text-sm font-medium text-purple-600 bg-purple-50 hover:bg-purple-100 rounded-xl transition-colors"
+                onClick={() => { setShowNewGroupForm(true); setExpandedGroupId(null) }}
+              >
+                + New Group
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Group Confirm Modal */}
+      {confirmDeleteGroup && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-6" onClick={() => setConfirmDeleteGroup(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-5">
+              <p className="font-semibold text-gray-900 text-base">Delete group?</p>
+              <p className="text-sm text-gray-500 mt-1 leading-snug">"{confirmDeleteGroup.name}" will be permanently removed. Items already on your shopping list won't be affected.</p>
+            </div>
+            <div className="flex border-t border-gray-100">
+              <button className="flex-1 py-3.5 text-sm text-gray-500 hover:bg-gray-50 transition-colors" onClick={() => setConfirmDeleteGroup(null)}>
+                Cancel
+              </button>
+              <button className="flex-1 py-3.5 text-sm font-medium text-red-500 hover:bg-red-50 transition-colors border-l border-gray-100" onClick={() => deleteGroup(confirmDeleteGroup)}>
+                Delete
               </button>
             </div>
           </div>
