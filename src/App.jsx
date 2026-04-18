@@ -13,6 +13,13 @@ const STORE_COLORS = {
 }
 
 const BLANK_FORM = { name: '', primaryStore: 'Walmart', category: 'Pantry', notes: '', secondaryStore: '' }
+const itemToForm = item => ({
+  name: item.name,
+  primaryStore: item.primaryStore,
+  secondaryStore: item.secondaryStore || '',
+  category: item.category,
+  notes: item.notes || '',
+})
 
 async function seedIfEmpty(db) {
   const snap = await getDocs(query(collection(db, 'items')))
@@ -35,6 +42,7 @@ export default function App() {
   const [storePicker, setStorePicker] = useState(null) // item
   const [confirmDelete, setConfirmDelete] = useState(null) // item
   const [showAddForm, setShowAddForm] = useState(false)
+  const [editingItem, setEditingItem] = useState(null) // item being edited
   const [form, setForm] = useState(BLANK_FORM)
 
   useEffect(() => {
@@ -76,15 +84,26 @@ export default function App() {
 
   async function addItem() {
     if (!form.name.trim()) return
-    await addDoc(collection(db, 'items'), {
-      name: form.name.trim(),
-      primaryStore: form.primaryStore,
-      secondaryStore: form.secondaryStore || null,
-      category: form.category,
-      notes: form.notes.trim() || null,
-      active: true,
-      checked: false,
-    })
+    if (editingItem) {
+      await updateDoc(doc(db, 'items', editingItem.id), {
+        name: form.name.trim(),
+        primaryStore: form.primaryStore,
+        secondaryStore: form.secondaryStore || null,
+        category: form.category,
+        notes: form.notes.trim() || null,
+      })
+      setEditingItem(null)
+    } else {
+      await addDoc(collection(db, 'items'), {
+        name: form.name.trim(),
+        primaryStore: form.primaryStore,
+        secondaryStore: form.secondaryStore || null,
+        category: form.category,
+        notes: form.notes.trim() || null,
+        active: true,
+        checked: false,
+      })
+    }
     setForm(BLANK_FORM)
     setShowAddForm(false)
   }
@@ -241,6 +260,12 @@ export default function App() {
           </button>
           <button
             className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition-colors border-t border-gray-50"
+            onClick={() => { setEditingItem(contextMenu.item); setForm(itemToForm(contextMenu.item)); setShowAddForm(true); setContextMenu(null) }}
+          >
+            ✏️ Edit Item
+          </button>
+          <button
+            className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition-colors border-t border-gray-50"
             onClick={() => { setStorePicker(contextMenu.item); setContextMenu(null) }}
           >
             🏪 Change Store
@@ -303,11 +328,11 @@ export default function App() {
 
       {/* Add Item Modal */}
       {showAddForm && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40" onClick={() => setShowAddForm(false)}>
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40" onClick={() => { setShowAddForm(false); setEditingItem(null); setForm(BLANK_FORM) }}>
           <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-              <p className="font-semibold text-gray-900">Add Item</p>
-              <button className="text-gray-400 text-xl leading-none" onClick={() => setShowAddForm(false)}>×</button>
+              <p className="font-semibold text-gray-900">{editingItem ? 'Edit Item' : 'Add Item'}</p>
+              <button className="text-gray-400 text-xl leading-none" onClick={() => { setShowAddForm(false); setEditingItem(null); setForm(BLANK_FORM) }}>×</button>
             </div>
             <div className="px-4 py-4 space-y-3">
               <div>
@@ -365,7 +390,7 @@ export default function App() {
               </div>
             </div>
             <div className="flex border-t border-gray-100">
-              <button className="flex-1 py-3.5 text-sm text-gray-500 hover:bg-gray-50 transition-colors" onClick={() => setShowAddForm(false)}>
+              <button className="flex-1 py-3.5 text-sm text-gray-500 hover:bg-gray-50 transition-colors" onClick={() => { setShowAddForm(false); setEditingItem(null); setForm(BLANK_FORM) }}>
                 Cancel
               </button>
               <button
@@ -375,7 +400,7 @@ export default function App() {
                 onClick={addItem}
                 disabled={!form.name.trim()}
               >
-                Add Item
+                {editingItem ? 'Save Changes' : 'Add Item'}
               </button>
             </div>
           </div>
