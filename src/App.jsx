@@ -2,6 +2,9 @@ import { useState, useEffect, useRef } from 'react'
 import { collection, onSnapshot, doc, updateDoc, deleteDoc, writeBatch, query, getDocs, addDoc, setDoc } from 'firebase/firestore'
 import { db } from './firebase'
 import { CATEGORIES, SEED_ITEMS, DEFAULT_STORES } from './seedData'
+import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors } from '@dnd-kit/core'
+import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 
 const COLOR_OPTIONS = [
   { label: 'Blue',   swatch: 'bg-blue-200',   classes: 'bg-blue-100 text-blue-800' },
@@ -49,11 +52,17 @@ async function seedStoresIfEmpty(db) {
 }
 
 export default function App() {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 5 } })
+  )
+
   const [items, setItems] = useState([])
   const [groups, setGroups] = useState([])
   const [stores, setStores] = useState([])
   const [itemsLoaded, setItemsLoaded] = useState(false)
   const [storesLoaded, setStoresLoaded] = useState(false)
+  const [loadTimedOut, setLoadTimedOut] = useState(false)
   const [filterStore, setFilterStore] = useState('All')
   const [filterCategory, setFilterCategory] = useState('All')
   const [showInactive, setShowInactive] = useState(false)
@@ -63,6 +72,18 @@ export default function App() {
   const [showAddForm, setShowAddForm] = useState(false)
   const [editingItem, setEditingItem] = useState(null)
   const [form, setForm] = useState(BLANK_FORM)
+
+  // Dark mode
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('darkMode') === 'true')
+
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark')
+    } else {
+      document.documentElement.classList.remove('dark')
+    }
+    localStorage.setItem('darkMode', darkMode)
+  }, [darkMode])
 
   // Stores panel state
   const [showStores, setShowStores] = useState(false)
@@ -76,11 +97,11 @@ export default function App() {
   const [expandedGroupId, setExpandedGroupId] = useState(null)
   const [showNewGroupForm, setShowNewGroupForm] = useState(false)
   const [newGroupName, setNewGroupName] = useState('')
-  const [addingItemToGroup, setAddingItemToGroup] = useState(null) // group id
+  const [addingItemToGroup, setAddingItemToGroup] = useState(null)
   const [groupItemForm, setGroupItemForm] = useState(BLANK_FORM)
   const [confirmDeleteGroup, setConfirmDeleteGroup] = useState(null)
-  const [editingGroupName, setEditingGroupName] = useState(null) // { group, name }
-  const [activatedGroup, setActivatedGroup] = useState(null) // group name for toast
+  const [editingGroupName, setEditingGroupName] = useState(null)
+  const [activatedGroup, setActivatedGroup] = useState(null)
 
   useEffect(() => {
     seedIfEmpty(db).then(() => {
@@ -107,6 +128,11 @@ export default function App() {
       setGroups(snap.docs.map(d => ({ id: d.id, ...d.data() })))
     })
     return unsub
+  }, [])
+
+  useEffect(() => {
+    const t = setTimeout(() => setLoadTimedOut(true), 8000)
+    return () => clearTimeout(t)
   }, [])
 
   useEffect(() => {
@@ -183,6 +209,19 @@ export default function App() {
     const checked = items.filter(i => i.checked)
     const batch = writeBatch(db)
     checked.forEach(i => batch.update(doc(db, 'items', i.id), { checked: false }))
+    await batch.commit()
+  }
+
+  async function handleDragEnd(event, storeUnchecked) {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIndex = storeUnchecked.findIndex(i => i.id === active.id)
+    const newIndex = storeUnchecked.findIndex(i => i.id === over.id)
+    const reordered = arrayMove(storeUnchecked, oldIndex, newIndex)
+    const batch = writeBatch(db)
+    reordered.forEach((item, idx) => {
+      batch.update(doc(db, 'items', item.id), { order: idx })
+    })
     await batch.commit()
   }
 
@@ -306,40 +345,53 @@ export default function App() {
 
   if (!itemsLoaded || !storesLoaded) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-gray-400 text-lg">Loading list...</div>
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
+        {loadTimedOut ? (
+          <div className="text-center px-6">
+            <p className="text-gray-500 dark:text-gray-400 text-base font-medium">Couldn't connect</p>
+            <p className="text-gray-400 dark:text-gray-500 text-sm mt-1 mb-4">Check your connection and try again.</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium px-5 py-2.5 rounded-xl transition-colors"
+            >
+              Retry
+            </button>
+          </div>
+        ) : (
+          <div className="text-gray-400 dark:text-gray-500 text-lg">Loading list...</div>
+        )}
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       {/* Header */}
-      <div className="bg-white border-b border-gray-200 sticky top-0 z-10 shadow-sm">
+      <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 sticky top-0 z-10 shadow-sm">
         <div className="max-w-2xl mx-auto px-4 py-3">
           <div className="flex items-center justify-between mb-3">
             <div>
-              <h1 className="text-xl font-bold text-gray-900">Shopping List</h1>
-              <p className="text-xs text-gray-400 mt-0.5">{checkedCount} of {totalActive} active items checked</p>
+              <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Shopping List</h1>
+              <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{checkedCount} of {totalActive} active items checked</p>
             </div>
             <div className="flex items-center gap-2">
               {checkedCount > 0 && (
                 <button
                   onClick={clearAll}
-                  className="text-sm bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-lg transition-colors"
+                  className="text-sm bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 px-3 py-1.5 rounded-lg transition-colors"
                 >
                   Clear All ✓
                 </button>
               )}
               <button
                 onClick={() => setShowStores(true)}
-                className="text-sm bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-lg transition-colors font-medium"
+                className="text-sm bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 px-3 py-1.5 rounded-lg transition-colors font-medium"
               >
                 Stores
               </button>
               <button
                 onClick={() => setShowGroups(true)}
-                className="text-sm bg-purple-100 hover:bg-purple-200 text-purple-700 px-3 py-1.5 rounded-lg transition-colors font-medium"
+                className="text-sm bg-purple-100 dark:bg-purple-900/40 hover:bg-purple-200 dark:hover:bg-purple-900/60 text-purple-700 dark:text-purple-300 px-3 py-1.5 rounded-lg transition-colors font-medium"
               >
                 Groups
               </button>
@@ -349,6 +401,13 @@ export default function App() {
               >
                 + Add
               </button>
+              <button
+                onClick={() => setDarkMode(d => !d)}
+                className="text-lg px-2 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+              >
+                {darkMode ? '☀️' : '🌙'}
+              </button>
             </div>
           </div>
 
@@ -356,7 +415,7 @@ export default function App() {
             <select
               value={filterStore}
               onChange={e => setFilterStore(e.target.value)}
-              className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-700 flex-shrink-0"
+              className="text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1.5 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 flex-shrink-0"
             >
               <option value="All">All Stores</option>
               {storeNames.map(s => <option key={s} value={s}>{s}</option>)}
@@ -364,7 +423,7 @@ export default function App() {
             <select
               value={filterCategory}
               onChange={e => setFilterCategory(e.target.value)}
-              className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-700 flex-shrink-0"
+              className="text-sm border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1.5 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 flex-shrink-0"
             >
               <option value="All">All Categories</option>
               {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
@@ -372,7 +431,9 @@ export default function App() {
             <button
               onClick={() => setShowInactive(v => !v)}
               className={`text-sm px-3 py-1.5 rounded-lg flex-shrink-0 transition-colors ${
-                showInactive ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                showInactive
+                  ? 'bg-gray-700 dark:bg-gray-200 text-white dark:text-gray-800'
+                  : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
               }`}
             >
               {showInactive ? 'Hide Inactive' : 'Show Inactive'}
@@ -387,7 +448,14 @@ export default function App() {
           const storeItems = visibleItems.filter(i => i.primaryStore === store)
           if (storeItems.length === 0) return null
 
-          const activeUnchecked = storeItems.filter(i => i.active && !i.checked)
+          const activeUnchecked = storeItems
+            .filter(i => i.active && !i.checked)
+            .sort((a, b) => {
+              if (a.order == null && b.order == null) return 0
+              if (a.order == null) return 1
+              if (b.order == null) return -1
+              return a.order - b.order
+            })
           const activeChecked = storeItems.filter(i => i.active && i.checked)
           const inactive = storeItems.filter(i => !i.active)
 
@@ -395,24 +463,28 @@ export default function App() {
           if (!hasContent) return null
 
           return (
-            <div key={store} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div key={store} className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden">
               <div className={`px-4 py-2.5 flex items-center gap-2 ${storeColor(store)}`}>
                 <span className="font-semibold text-sm">{store}</span>
                 <span className="text-xs opacity-60 ml-auto">
                   {activeChecked.length}/{activeUnchecked.length + activeChecked.length}
                 </span>
               </div>
-              <div className="divide-y divide-gray-50">
-                {activeUnchecked.map(item => (
-                  <ItemRow key={item.id} item={item} onToggle={toggleCheck} onLongPress={openContextMenu} onUpdateQuantity={updateQuantity} />
-                ))}
+              <div className="divide-y divide-gray-50 dark:divide-gray-700">
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={e => handleDragEnd(e, activeUnchecked)}>
+                  <SortableContext items={activeUnchecked.map(i => i.id)} strategy={verticalListSortingStrategy}>
+                    {activeUnchecked.map(item => (
+                      <ItemRow key={item.id} item={item} onToggle={toggleCheck} onLongPress={openContextMenu} onUpdateQuantity={updateQuantity} sortable />
+                    ))}
+                  </SortableContext>
+                </DndContext>
                 {activeChecked.map(item => (
                   <ItemRow key={item.id} item={item} onToggle={toggleCheck} onLongPress={openContextMenu} onUpdateQuantity={updateQuantity} checked />
                 ))}
                 {showInactive && inactive.length > 0 && (
                   <>
                     {(activeUnchecked.length > 0 || activeChecked.length > 0) && (
-                      <div className="px-4 py-1 bg-gray-50 text-xs text-gray-400 uppercase tracking-wide">Inactive</div>
+                      <div className="px-4 py-1 bg-gray-50 dark:bg-gray-700/50 text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wide">Inactive</div>
                     )}
                     {inactive.map(item => (
                       <ItemRow key={item.id} item={item} onToggle={toggleCheck} onLongPress={openContextMenu} onUpdateQuantity={updateQuantity} inactive />
@@ -427,7 +499,7 @@ export default function App() {
 
       {/* Activated toast */}
       {activatedGroup && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-gray-900 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-sm px-4 py-2.5 rounded-xl shadow-lg">
           ✓ "{activatedGroup}" added to list
         </div>
       )}
@@ -435,44 +507,44 @@ export default function App() {
       {/* Context Menu */}
       {contextMenu && (
         <div
-          className="fixed z-50 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden min-w-48"
+          className="fixed z-50 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 overflow-hidden min-w-48"
           style={{
             top: contextMenu.y + 180 > window.innerHeight ? contextMenu.y - 180 : contextMenu.y,
             left: Math.min(contextMenu.x, window.innerWidth - 200)
           }}
           onClick={e => e.stopPropagation()}
         >
-          <div className="px-4 py-2.5 border-b border-gray-50">
-            <p className="text-xs font-medium text-gray-500 truncate">{contextMenu.item.name}</p>
+          <div className="px-4 py-2.5 border-b border-gray-50 dark:border-gray-700">
+            <p className="text-xs font-medium text-gray-500 dark:text-gray-400 truncate">{contextMenu.item.name}</p>
           </div>
           <button
-            className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+            className="w-full text-left px-4 py-3 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
             onClick={() => toggleActive(contextMenu.item)}
           >
             {contextMenu.item.active ? '🔕 Mark Inactive' : '✅ Mark Active'}
           </button>
           {contextMenu.item.secondaryStore && (
             <button
-              className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition-colors border-t border-gray-50"
+              className="w-full text-left px-4 py-3 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors border-t border-gray-50 dark:border-gray-700"
               onClick={() => pushToAlternate(contextMenu.item)}
             >
               ➡️ Not here — try {contextMenu.item.secondaryStore}
             </button>
           )}
           <button
-            className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition-colors border-t border-gray-50"
+            className="w-full text-left px-4 py-3 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors border-t border-gray-50 dark:border-gray-700"
             onClick={() => { setEditingItem(contextMenu.item); setForm(itemToForm(contextMenu.item)); setShowAddForm(true); setContextMenu(null) }}
           >
             ✏️ Edit Item
           </button>
           <button
-            className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition-colors border-t border-gray-50"
+            className="w-full text-left px-4 py-3 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors border-t border-gray-50 dark:border-gray-700"
             onClick={() => { setStorePicker(contextMenu.item); setContextMenu(null) }}
           >
             🏪 Change Store
           </button>
           <button
-            className="w-full text-left px-4 py-3 text-sm text-red-500 hover:bg-red-50 transition-colors border-t border-gray-50"
+            className="w-full text-left px-4 py-3 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors border-t border-gray-50 dark:border-gray-700"
             onClick={() => { setConfirmDelete(contextMenu.item); setContextMenu(null) }}
           >
             🗑 Delete Item
@@ -483,16 +555,18 @@ export default function App() {
       {/* Store Picker Modal */}
       {storePicker && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40" onClick={() => setStorePicker(null)}>
-          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="px-4 py-3 border-b border-gray-100">
-              <p className="font-medium text-gray-900 text-sm truncate">{storePicker.name}</p>
-              <p className="text-xs text-gray-400 mt-0.5">Currently: {storePicker.primaryStore}</p>
+          <div className="bg-white dark:bg-gray-800 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700">
+              <p className="font-medium text-gray-900 dark:text-gray-100 text-sm truncate">{storePicker.name}</p>
+              <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Currently: {storePicker.primaryStore}</p>
             </div>
             {storeNames.map(store => (
               <button
                 key={store}
-                className={`w-full text-left px-4 py-3.5 text-sm border-b border-gray-50 transition-colors ${
-                  store === storePicker.primaryStore ? 'bg-gray-50 text-gray-400' : 'text-gray-700 hover:bg-gray-50'
+                className={`w-full text-left px-4 py-3.5 text-sm border-b border-gray-50 dark:border-gray-700 transition-colors ${
+                  store === storePicker.primaryStore
+                    ? 'bg-gray-50 dark:bg-gray-700/50 text-gray-400 dark:text-gray-500'
+                    : 'text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'
                 }`}
                 onClick={() => changeStore(storePicker, store)}
                 disabled={store === storePicker.primaryStore}
@@ -500,7 +574,7 @@ export default function App() {
                 {store === storePicker.primaryStore ? `${store} (current)` : store}
               </button>
             ))}
-            <button className="w-full px-4 py-3.5 text-sm text-gray-400 hover:bg-gray-50" onClick={() => setStorePicker(null)}>
+            <button className="w-full px-4 py-3.5 text-sm text-gray-400 dark:text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700" onClick={() => setStorePicker(null)}>
               Cancel
             </button>
           </div>
@@ -510,16 +584,16 @@ export default function App() {
       {/* Delete Item Confirm Modal */}
       {confirmDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-6" onClick={() => setConfirmDelete(null)}>
-          <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="px-5 py-5">
-              <p className="font-semibold text-gray-900 text-base">Delete item?</p>
-              <p className="text-sm text-gray-500 mt-1 leading-snug">"{confirmDelete.name}" will be permanently removed.</p>
+              <p className="font-semibold text-gray-900 dark:text-gray-100 text-base">Delete item?</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 leading-snug">"{confirmDelete.name}" will be permanently removed.</p>
             </div>
-            <div className="flex border-t border-gray-100">
-              <button className="flex-1 py-3.5 text-sm text-gray-500 hover:bg-gray-50 transition-colors" onClick={() => setConfirmDelete(null)}>
+            <div className="flex border-t border-gray-100 dark:border-gray-700">
+              <button className="flex-1 py-3.5 text-sm text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors" onClick={() => setConfirmDelete(null)}>
                 Cancel
               </button>
-              <button className="flex-1 py-3.5 text-sm font-medium text-red-500 hover:bg-red-50 transition-colors border-l border-gray-100" onClick={() => deleteItem(confirmDelete)}>
+              <button className="flex-1 py-3.5 text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors border-l border-gray-100 dark:border-gray-700" onClick={() => deleteItem(confirmDelete)}>
                 Delete
               </button>
             </div>
@@ -530,14 +604,14 @@ export default function App() {
       {/* Add / Edit Item Modal */}
       {showAddForm && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40" onClick={() => { setShowAddForm(false); setEditingItem(null); setForm(BLANK_FORM) }}>
-          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-              <p className="font-semibold text-gray-900">{editingItem ? 'Edit Item' : 'Add Item'}</p>
-              <button className="text-gray-400 text-xl leading-none" onClick={() => { setShowAddForm(false); setEditingItem(null); setForm(BLANK_FORM) }}>×</button>
+          <div className="bg-white dark:bg-gray-800 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between">
+              <p className="font-semibold text-gray-900 dark:text-gray-100">{editingItem ? 'Edit Item' : 'Add Item'}</p>
+              <button className="text-gray-400 dark:text-gray-500 text-xl leading-none" onClick={() => { setShowAddForm(false); setEditingItem(null); setForm(BLANK_FORM) }}>×</button>
             </div>
             <div className="px-4 py-4 space-y-3">
               <div>
-                <label className="text-xs text-gray-500 font-medium mb-1 block">Item name *</label>
+                <label className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-1 block">Item name *</label>
                 <input
                   autoFocus
                   type="text"
@@ -545,68 +619,68 @@ export default function App() {
                   onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
                   onKeyDown={e => e.key === 'Enter' && addItem()}
                   placeholder="e.g. Organic Apples"
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-blue-400"
+                  className="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-800 dark:text-gray-100 bg-white dark:bg-gray-700 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-blue-400"
                 />
               </div>
               <div>
-                <label className="text-xs text-gray-500 font-medium mb-1 block">Store</label>
+                <label className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-1 block">Store</label>
                 <select
                   value={form.primaryStore}
                   onChange={e => setForm(f => ({ ...f, primaryStore: e.target.value }))}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-blue-400"
+                  className="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-800 dark:text-gray-100 bg-white dark:bg-gray-700 focus:outline-none focus:border-blue-400"
                 >
                   {storeNames.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
               <div>
-                <label className="text-xs text-gray-500 font-medium mb-1 block">Category</label>
+                <label className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-1 block">Category</label>
                 <select
                   value={form.category}
                   onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-blue-400"
+                  className="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-800 dark:text-gray-100 bg-white dark:bg-gray-700 focus:outline-none focus:border-blue-400"
                 >
                   {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
               <div>
-                <label className="text-xs text-gray-500 font-medium mb-1 block">Also at (optional)</label>
+                <label className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-1 block">Also at (optional)</label>
                 <select
                   value={form.secondaryStore}
                   onChange={e => setForm(f => ({ ...f, secondaryStore: e.target.value }))}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-blue-400"
+                  className="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-800 dark:text-gray-100 bg-white dark:bg-gray-700 focus:outline-none focus:border-blue-400"
                 >
                   <option value="">None</option>
                   {storeNames.filter(s => s !== form.primaryStore).map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
               <div>
-                <label className="text-xs text-gray-500 font-medium mb-1 block">Quantity (optional)</label>
+                <label className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-1 block">Quantity (optional)</label>
                 <input
                   type="text"
                   value={form.quantity}
                   onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))}
                   placeholder="e.g. 2, 1 lb, 3 cans"
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-blue-400"
+                  className="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-800 dark:text-gray-100 bg-white dark:bg-gray-700 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-blue-400"
                 />
               </div>
               <div>
-                <label className="text-xs text-gray-500 font-medium mb-1 block">Notes (optional)</label>
+                <label className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-1 block">Notes (optional)</label>
                 <input
                   type="text"
                   value={form.notes}
                   onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
                   placeholder="e.g. check the date"
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-blue-400"
+                  className="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-800 dark:text-gray-100 bg-white dark:bg-gray-700 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-blue-400"
                 />
               </div>
             </div>
-            <div className="flex border-t border-gray-100">
-              <button className="flex-1 py-3.5 text-sm text-gray-500 hover:bg-gray-50 transition-colors" onClick={() => { setShowAddForm(false); setEditingItem(null); setForm(BLANK_FORM) }}>
+            <div className="flex border-t border-gray-100 dark:border-gray-700">
+              <button className="flex-1 py-3.5 text-sm text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors" onClick={() => { setShowAddForm(false); setEditingItem(null); setForm(BLANK_FORM) }}>
                 Cancel
               </button>
               <button
-                className={`flex-1 py-3.5 text-sm font-medium transition-colors border-l border-gray-100 ${
-                  form.name.trim() ? 'text-blue-500 hover:bg-blue-50' : 'text-gray-300'
+                className={`flex-1 py-3.5 text-sm font-medium transition-colors border-l border-gray-100 dark:border-gray-700 ${
+                  form.name.trim() ? 'text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20' : 'text-gray-300 dark:text-gray-600'
                 }`}
                 onClick={addItem}
                 disabled={!form.name.trim()}
@@ -625,35 +699,35 @@ export default function App() {
           onClick={() => { setShowStores(false); setShowAddStoreForm(false) }}
         >
           <div
-            className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm shadow-2xl flex flex-col"
+            className="bg-white dark:bg-gray-800 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm shadow-2xl flex flex-col"
             style={{ maxHeight: '80vh' }}
             onClick={e => e.stopPropagation()}
           >
-            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
-              <p className="font-semibold text-gray-900">Manage Stores</p>
-              <button className="text-gray-400 text-xl leading-none" onClick={() => { setShowStores(false); setShowAddStoreForm(false) }}>×</button>
+            <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
+              <p className="font-semibold text-gray-900 dark:text-gray-100">Manage Stores</p>
+              <button className="text-gray-400 dark:text-gray-500 text-xl leading-none" onClick={() => { setShowStores(false); setShowAddStoreForm(false) }}>×</button>
             </div>
 
             <div className="overflow-y-auto flex-1">
               {stores.map((store, idx) => (
-                <div key={store.id} className="flex items-center gap-3 px-4 py-3 border-b border-gray-50">
+                <div key={store.id} className="flex items-center gap-3 px-4 py-3 border-b border-gray-50 dark:border-gray-700">
                   <span className={`w-4 h-4 rounded-full flex-shrink-0 ${COLOR_OPTIONS.find(c => c.classes === store.color)?.swatch ?? 'bg-gray-300'}`} />
-                  <span className="flex-1 text-sm text-gray-800">{store.name}</span>
+                  <span className="flex-1 text-sm text-gray-800 dark:text-gray-200">{store.name}</span>
                   <div className="flex items-center gap-1 flex-shrink-0">
                     <button
-                      className="text-gray-300 hover:text-gray-600 px-1.5 py-1 rounded transition-colors disabled:opacity-20"
+                      className="text-gray-300 dark:text-gray-600 hover:text-gray-600 dark:hover:text-gray-300 px-1.5 py-1 rounded transition-colors disabled:opacity-20"
                       onClick={() => moveStore(store, 'up')}
                       disabled={idx === 0}
                       title="Move up"
                     >↑</button>
                     <button
-                      className="text-gray-300 hover:text-gray-600 px-1.5 py-1 rounded transition-colors disabled:opacity-20"
+                      className="text-gray-300 dark:text-gray-600 hover:text-gray-600 dark:hover:text-gray-300 px-1.5 py-1 rounded transition-colors disabled:opacity-20"
                       onClick={() => moveStore(store, 'down')}
                       disabled={idx === stores.length - 1}
                       title="Move down"
                     >↓</button>
                     <button
-                      className="text-gray-300 hover:text-red-400 px-1.5 py-1 rounded hover:bg-red-50 transition-colors text-sm"
+                      className="text-gray-300 dark:text-gray-600 hover:text-red-400 px-1.5 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors text-sm"
                       onClick={() => setConfirmDeleteStore(store)}
                       title="Delete"
                     >🗑</button>
@@ -663,7 +737,7 @@ export default function App() {
 
               {/* Add store form */}
               {showAddStoreForm && (
-                <div className="px-4 py-3 space-y-3 border-t border-gray-100">
+                <div className="px-4 py-3 space-y-3 border-t border-gray-100 dark:border-gray-700">
                   <input
                     autoFocus
                     type="text"
@@ -671,10 +745,10 @@ export default function App() {
                     value={newStoreName}
                     onChange={e => setNewStoreName(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter') addStore(); if (e.key === 'Escape') setShowAddStoreForm(false) }}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-blue-400"
+                    className="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-800 dark:text-gray-100 bg-white dark:bg-gray-700 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-blue-400"
                   />
                   <div>
-                    <p className="text-xs text-gray-500 font-medium mb-2">Color</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-2">Color</p>
                     <div className="flex flex-wrap gap-2">
                       {COLOR_OPTIONS.map(opt => (
                         <button
@@ -688,12 +762,12 @@ export default function App() {
                   </div>
                   <div className="flex gap-2">
                     <button
-                      className="flex-1 py-2 text-sm text-gray-500 hover:bg-gray-100 rounded-lg transition-colors"
+                      className="flex-1 py-2 text-sm text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
                       onClick={() => { setShowAddStoreForm(false); setNewStoreName('') }}
                     >Cancel</button>
                     <button
                       className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors ${
-                        newStoreName.trim() ? 'bg-blue-500 hover:bg-blue-600 text-white' : 'bg-gray-100 text-gray-300'
+                        newStoreName.trim() ? 'bg-blue-500 hover:bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-300 dark:text-gray-600'
                       }`}
                       onClick={addStore}
                       disabled={!newStoreName.trim()}
@@ -703,9 +777,9 @@ export default function App() {
               )}
             </div>
 
-            <div className="border-t border-gray-100 px-4 py-3 flex-shrink-0">
+            <div className="border-t border-gray-100 dark:border-gray-700 px-4 py-3 flex-shrink-0">
               <button
-                className="w-full py-2.5 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-xl transition-colors"
+                className="w-full py-2.5 text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 rounded-xl transition-colors"
                 onClick={() => setShowAddStoreForm(true)}
               >
                 + Add Store
@@ -718,16 +792,16 @@ export default function App() {
       {/* Delete Store Confirm */}
       {confirmDeleteStore && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-6" onClick={() => setConfirmDeleteStore(null)}>
-          <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="px-5 py-5">
-              <p className="font-semibold text-gray-900 text-base">Delete store?</p>
-              <p className="text-sm text-gray-500 mt-1 leading-snug">
+              <p className="font-semibold text-gray-900 dark:text-gray-100 text-base">Delete store?</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 leading-snug">
                 "{confirmDeleteStore.name}" will be removed. Items assigned to it won't be deleted but won't appear under any store section.
               </p>
             </div>
-            <div className="flex border-t border-gray-100">
-              <button className="flex-1 py-3.5 text-sm text-gray-500 hover:bg-gray-50 transition-colors" onClick={() => setConfirmDeleteStore(null)}>Cancel</button>
-              <button className="flex-1 py-3.5 text-sm font-medium text-red-500 hover:bg-red-50 transition-colors border-l border-gray-100" onClick={() => deleteStore(confirmDeleteStore)}>Delete</button>
+            <div className="flex border-t border-gray-100 dark:border-gray-700">
+              <button className="flex-1 py-3.5 text-sm text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors" onClick={() => setConfirmDeleteStore(null)}>Cancel</button>
+              <button className="flex-1 py-3.5 text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors border-l border-gray-100 dark:border-gray-700" onClick={() => deleteStore(confirmDeleteStore)}>Delete</button>
             </div>
           </div>
         </div>
@@ -740,15 +814,15 @@ export default function App() {
           onClick={() => { setShowGroups(false); setExpandedGroupId(null); setShowNewGroupForm(false); setAddingItemToGroup(null) }}
         >
           <div
-            className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm shadow-2xl flex flex-col"
+            className="bg-white dark:bg-gray-800 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm shadow-2xl flex flex-col"
             style={{ maxHeight: '85vh' }}
             onClick={e => e.stopPropagation()}
           >
             {/* Groups header */}
-            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
-              <p className="font-semibold text-gray-900">Shopping Groups</p>
+            <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
+              <p className="font-semibold text-gray-900 dark:text-gray-100">Shopping Groups</p>
               <button
-                className="text-gray-400 text-xl leading-none"
+                className="text-gray-400 dark:text-gray-500 text-xl leading-none"
                 onClick={() => { setShowGroups(false); setExpandedGroupId(null); setShowNewGroupForm(false); setAddingItemToGroup(null) }}
               >×</button>
             </div>
@@ -756,19 +830,19 @@ export default function App() {
             {/* Groups list */}
             <div className="overflow-y-auto flex-1">
               {groups.length === 0 && !showNewGroupForm && (
-                <div className="px-4 py-8 text-center text-gray-400 text-sm">
+                <div className="px-4 py-8 text-center text-gray-400 dark:text-gray-500 text-sm">
                   No groups yet. Create one to get started.
                 </div>
               )}
 
               {groups.map(group => (
-                <div key={group.id} className="border-b border-gray-50">
+                <div key={group.id} className="border-b border-gray-50 dark:border-gray-700">
                   {/* Group row */}
                   <div className="flex items-center gap-2 px-4 py-3">
                     {editingGroupName?.group.id === group.id ? (
                       <input
                         autoFocus
-                        className="flex-1 text-sm text-gray-800 border border-gray-200 rounded-lg px-2 py-1 focus:outline-none focus:border-purple-400"
+                        className="flex-1 text-sm text-gray-800 dark:text-gray-100 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1 focus:outline-none focus:border-purple-400"
                         value={editingGroupName.name}
                         onChange={e => setEditingGroupName(s => ({ ...s, name: e.target.value }))}
                         onKeyDown={e => {
@@ -782,28 +856,28 @@ export default function App() {
                         className="flex-1 text-left"
                         onClick={() => setExpandedGroupId(expandedGroupId === group.id ? null : group.id)}
                       >
-                        <span className="text-sm font-medium text-gray-800">{group.name}</span>
-                        <span className="text-xs text-gray-400 ml-2">{(group.items || []).length} items</span>
+                        <span className="text-sm font-medium text-gray-800 dark:text-gray-100">{group.name}</span>
+                        <span className="text-xs text-gray-400 dark:text-gray-500 ml-2">{(group.items || []).length} items</span>
                       </button>
                     )}
 
                     <div className="flex items-center gap-1 flex-shrink-0">
                       <button
-                        className="text-xs text-purple-600 bg-purple-50 hover:bg-purple-100 px-2.5 py-1.5 rounded-lg font-medium transition-colors"
+                        className="text-xs text-purple-600 dark:text-purple-300 bg-purple-50 dark:bg-purple-900/30 hover:bg-purple-100 dark:hover:bg-purple-900/50 px-2.5 py-1.5 rounded-lg font-medium transition-colors"
                         onClick={() => activateGroup(group)}
                         disabled={(group.items || []).length === 0}
                       >
                         Activate
                       </button>
                       <button
-                        className="text-gray-400 hover:text-gray-600 px-1.5 py-1.5 rounded-lg hover:bg-gray-100 transition-colors text-xs"
+                        className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 px-1.5 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-xs"
                         onClick={() => setEditingGroupName({ group, name: group.name })}
                         title="Rename"
                       >
                         ✏️
                       </button>
                       <button
-                        className="text-gray-400 hover:text-red-500 px-1.5 py-1.5 rounded-lg hover:bg-red-50 transition-colors text-xs"
+                        className="text-gray-400 dark:text-gray-500 hover:text-red-500 px-1.5 py-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors text-xs"
                         onClick={() => setConfirmDeleteGroup(group)}
                         title="Delete"
                       >
@@ -814,18 +888,18 @@ export default function App() {
 
                   {/* Expanded: items in group */}
                   {expandedGroupId === group.id && (
-                    <div className="bg-gray-50 border-t border-gray-100">
+                    <div className="bg-gray-50 dark:bg-gray-700/50 border-t border-gray-100 dark:border-gray-700">
                       {(group.items || []).length === 0 && addingItemToGroup !== group.id && (
-                        <p className="px-5 py-3 text-xs text-gray-400 italic">No items yet.</p>
+                        <p className="px-5 py-3 text-xs text-gray-400 dark:text-gray-500 italic">No items yet.</p>
                       )}
                       {(group.items || []).map((gi, idx) => (
-                        <div key={idx} className="flex items-center gap-2 px-5 py-2.5 border-b border-gray-100 last:border-0">
+                        <div key={idx} className="flex items-center gap-2 px-5 py-2.5 border-b border-gray-100 dark:border-gray-700 last:border-0">
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm text-gray-700 truncate">{gi.name}</p>
-                            <p className="text-xs text-gray-400">{gi.primaryStore} · {gi.category}</p>
+                            <p className="text-sm text-gray-700 dark:text-gray-200 truncate">{gi.name}</p>
+                            <p className="text-xs text-gray-400 dark:text-gray-500">{gi.primaryStore} · {gi.category}</p>
                           </div>
                           <button
-                            className="text-gray-300 hover:text-red-400 text-lg leading-none flex-shrink-0 transition-colors"
+                            className="text-gray-300 dark:text-gray-600 hover:text-red-400 text-lg leading-none flex-shrink-0 transition-colors"
                             onClick={() => removeGroupItem(group, idx)}
                           >×</button>
                         </div>
@@ -833,7 +907,7 @@ export default function App() {
 
                       {/* Add item to group inline form */}
                       {addingItemToGroup === group.id ? (
-                        <div className="px-4 py-3 space-y-2 border-t border-gray-100 bg-white">
+                        <div className="px-4 py-3 space-y-2 border-t border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800">
                           <input
                             autoFocus
                             type="text"
@@ -841,20 +915,20 @@ export default function App() {
                             value={groupItemForm.name}
                             onChange={e => setGroupItemForm(f => ({ ...f, name: e.target.value }))}
                             onKeyDown={e => e.key === 'Enter' && addGroupItem(group)}
-                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-purple-400"
+                            className="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-800 dark:text-gray-100 bg-white dark:bg-gray-700 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-purple-400"
                           />
                           <div className="flex gap-2">
                             <select
                               value={groupItemForm.primaryStore}
                               onChange={e => setGroupItemForm(f => ({ ...f, primaryStore: e.target.value }))}
-                              className="flex-1 border border-gray-200 rounded-lg px-2 py-2 text-sm text-gray-700 focus:outline-none focus:border-purple-400"
+                              className="flex-1 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2 text-sm text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 focus:outline-none focus:border-purple-400"
                             >
                               {storeNames.map(s => <option key={s} value={s}>{s}</option>)}
                             </select>
                             <select
                               value={groupItemForm.category}
                               onChange={e => setGroupItemForm(f => ({ ...f, category: e.target.value }))}
-                              className="flex-1 border border-gray-200 rounded-lg px-2 py-2 text-sm text-gray-700 focus:outline-none focus:border-purple-400"
+                              className="flex-1 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2 text-sm text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 focus:outline-none focus:border-purple-400"
                             >
                               {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                             </select>
@@ -864,16 +938,16 @@ export default function App() {
                             placeholder="Notes (optional)"
                             value={groupItemForm.notes}
                             onChange={e => setGroupItemForm(f => ({ ...f, notes: e.target.value }))}
-                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-purple-400"
+                            className="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-800 dark:text-gray-100 bg-white dark:bg-gray-700 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-purple-400"
                           />
                           <div className="flex gap-2">
                             <button
-                              className="flex-1 py-2 text-sm text-gray-500 hover:bg-gray-100 rounded-lg transition-colors"
+                              className="flex-1 py-2 text-sm text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
                               onClick={() => { setAddingItemToGroup(null); setGroupItemForm(BLANK_FORM) }}
                             >Cancel</button>
                             <button
                               className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors ${
-                                groupItemForm.name.trim() ? 'bg-purple-500 hover:bg-purple-600 text-white' : 'bg-gray-100 text-gray-300'
+                                groupItemForm.name.trim() ? 'bg-purple-500 hover:bg-purple-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-300 dark:text-gray-600'
                               }`}
                               onClick={() => addGroupItem(group)}
                               disabled={!groupItemForm.name.trim()}
@@ -882,7 +956,7 @@ export default function App() {
                         </div>
                       ) : (
                         <button
-                          className="w-full px-5 py-2.5 text-xs text-purple-600 hover:bg-purple-50 transition-colors text-left font-medium border-t border-gray-100"
+                          className="w-full px-5 py-2.5 text-xs text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-colors text-left font-medium border-t border-gray-100 dark:border-gray-700"
                           onClick={() => { setAddingItemToGroup(group.id); setGroupItemForm(BLANK_FORM) }}
                         >
                           + Add item to group
@@ -895,7 +969,7 @@ export default function App() {
 
               {/* New group form */}
               {showNewGroupForm && (
-                <div className="px-4 py-3 flex gap-2 border-t border-gray-100">
+                <div className="px-4 py-3 flex gap-2 border-t border-gray-100 dark:border-gray-700">
                   <input
                     autoFocus
                     type="text"
@@ -906,11 +980,11 @@ export default function App() {
                       if (e.key === 'Enter') createGroup()
                       if (e.key === 'Escape') { setShowNewGroupForm(false); setNewGroupName('') }
                     }}
-                    className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-purple-400"
+                    className="flex-1 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-800 dark:text-gray-100 bg-white dark:bg-gray-700 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-purple-400"
                   />
                   <button
                     className={`px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
-                      newGroupName.trim() ? 'bg-purple-500 hover:bg-purple-600 text-white' : 'bg-gray-100 text-gray-300'
+                      newGroupName.trim() ? 'bg-purple-500 hover:bg-purple-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-300 dark:text-gray-600'
                     }`}
                     onClick={createGroup}
                     disabled={!newGroupName.trim()}
@@ -920,9 +994,9 @@ export default function App() {
             </div>
 
             {/* Footer */}
-            <div className="border-t border-gray-100 px-4 py-3 flex-shrink-0">
+            <div className="border-t border-gray-100 dark:border-gray-700 px-4 py-3 flex-shrink-0">
               <button
-                className="w-full py-2.5 text-sm font-medium text-purple-600 bg-purple-50 hover:bg-purple-100 rounded-xl transition-colors"
+                className="w-full py-2.5 text-sm font-medium text-purple-600 dark:text-purple-300 bg-purple-50 dark:bg-purple-900/20 hover:bg-purple-100 dark:hover:bg-purple-900/40 rounded-xl transition-colors"
                 onClick={() => { setShowNewGroupForm(true); setExpandedGroupId(null) }}
               >
                 + New Group
@@ -935,16 +1009,16 @@ export default function App() {
       {/* Delete Group Confirm Modal */}
       {confirmDeleteGroup && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-6" onClick={() => setConfirmDeleteGroup(null)}>
-          <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="px-5 py-5">
-              <p className="font-semibold text-gray-900 text-base">Delete group?</p>
-              <p className="text-sm text-gray-500 mt-1 leading-snug">"{confirmDeleteGroup.name}" will be permanently removed. Items already on your shopping list won't be affected.</p>
+              <p className="font-semibold text-gray-900 dark:text-gray-100 text-base">Delete group?</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 leading-snug">"{confirmDeleteGroup.name}" will be permanently removed. Items already on your shopping list won't be affected.</p>
             </div>
-            <div className="flex border-t border-gray-100">
-              <button className="flex-1 py-3.5 text-sm text-gray-500 hover:bg-gray-50 transition-colors" onClick={() => setConfirmDeleteGroup(null)}>
+            <div className="flex border-t border-gray-100 dark:border-gray-700">
+              <button className="flex-1 py-3.5 text-sm text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors" onClick={() => setConfirmDeleteGroup(null)}>
                 Cancel
               </button>
-              <button className="flex-1 py-3.5 text-sm font-medium text-red-500 hover:bg-red-50 transition-colors border-l border-gray-100" onClick={() => deleteGroup(confirmDeleteGroup)}>
+              <button className="flex-1 py-3.5 text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors border-l border-gray-100 dark:border-gray-700" onClick={() => deleteGroup(confirmDeleteGroup)}>
                 Delete
               </button>
             </div>
@@ -955,11 +1029,23 @@ export default function App() {
   )
 }
 
-function ItemRow({ item, onToggle, onLongPress, onUpdateQuantity, checked = false, inactive = false }) {
+function ItemRow({ item, onToggle, onLongPress, onUpdateQuantity, checked = false, inactive = false, sortable = false }) {
   const longPressTimer = useRef(null)
   const [editingQty, setEditingQty] = useState(false)
   const [qtyValue, setQtyValue] = useState(item.quantity || '')
   const qtyInputRef = useRef(null)
+
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: item.id,
+    disabled: !sortable,
+  })
+
+  const dragStyle = sortable ? {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 10 : undefined,
+    opacity: isDragging ? 0.5 : 1,
+  } : {}
 
   function handleTouchStart(e) {
     const touch = e.touches[0]
@@ -991,18 +1077,36 @@ function ItemRow({ item, onToggle, onLongPress, onUpdateQuantity, checked = fals
 
   return (
     <div
-      className={`flex items-center gap-3 px-4 py-3 cursor-pointer active:bg-gray-50 transition-colors select-none ${
-        inactive ? 'opacity-40' : checked ? 'bg-gray-50/50' : ''
+      ref={setNodeRef}
+      style={dragStyle}
+      className={`flex items-center gap-3 px-4 py-3 transition-colors select-none ${
+        inactive ? 'opacity-40' : checked ? 'bg-gray-50/50 dark:bg-gray-700/30' : ''
       }`}
-      onClick={() => onToggle(item)}
       onContextMenu={handleContextMenu}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
       onTouchMove={handleTouchEnd}
     >
-      <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-colors ${
-        checked ? 'bg-green-500 border-green-500' : 'border-gray-300 hover:border-gray-400'
-      }`}>
+      {sortable && (
+        <div
+          {...attributes}
+          {...listeners}
+          className="flex-shrink-0 text-gray-300 dark:text-gray-600 hover:text-gray-400 dark:hover:text-gray-400 cursor-grab active:cursor-grabbing touch-none"
+          onTouchStart={e => { e.stopPropagation(); clearTimeout(longPressTimer.current) }}
+        >
+          <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
+            <circle cx="3" cy="2.5" r="1.5"/><circle cx="7" cy="2.5" r="1.5"/>
+            <circle cx="3" cy="7" r="1.5"/><circle cx="7" cy="7" r="1.5"/>
+            <circle cx="3" cy="11.5" r="1.5"/><circle cx="7" cy="11.5" r="1.5"/>
+          </svg>
+        </div>
+      )}
+      <div
+        className={`w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-colors cursor-pointer ${
+          checked ? 'bg-green-500 border-green-500' : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-400'
+        }`}
+        onClick={() => onToggle(item)}
+      >
         {checked && (
           <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
@@ -1023,14 +1127,14 @@ function ItemRow({ item, onToggle, onLongPress, onUpdateQuantity, checked = fals
           onClick={e => e.stopPropagation()}
           onTouchStart={e => e.stopPropagation()}
           placeholder="qty"
-          className="w-14 text-center text-sm font-medium text-blue-600 border border-blue-300 rounded-md px-1 py-0.5 focus:outline-none focus:border-blue-500 flex-shrink-0"
+          className="w-14 text-center text-sm font-medium text-blue-600 dark:text-blue-400 border border-blue-300 dark:border-blue-600 bg-white dark:bg-gray-700 rounded-md px-1 py-0.5 focus:outline-none focus:border-blue-500 flex-shrink-0"
         />
       ) : (
         <button
           className={`flex-shrink-0 min-w-[2.5rem] text-center text-sm font-medium rounded-md px-1.5 py-0.5 transition-colors ${
             item.quantity
-              ? 'text-blue-600 bg-blue-50 hover:bg-blue-100'
-              : 'text-gray-300 hover:text-blue-400 hover:bg-blue-50'
+              ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40'
+              : 'text-gray-300 dark:text-gray-600 hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20'
           }`}
           onClick={openQtyEdit}
           onTouchStart={e => { e.stopPropagation(); clearTimeout(longPressTimer.current) }}
@@ -1042,18 +1146,18 @@ function ItemRow({ item, onToggle, onLongPress, onUpdateQuantity, checked = fals
 
       <div className="flex-1 min-w-0">
         <p className={`text-sm leading-snug ${
-          checked ? 'line-through text-gray-400' : inactive ? 'text-gray-500' : 'text-gray-800'
+          checked ? 'line-through text-gray-400 dark:text-gray-500' : inactive ? 'text-gray-500 dark:text-gray-400' : 'text-gray-800 dark:text-gray-100'
         }`}>
           {item.name}
         </p>
         <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
-          <span className="text-xs text-gray-400">{item.category}</span>
+          <span className="text-xs text-gray-400 dark:text-gray-500">{item.category}</span>
           {item.secondaryStore && (
-            <span className="text-xs text-gray-400">· also {item.secondaryStore}</span>
+            <span className="text-xs text-gray-400 dark:text-gray-500">· also {item.secondaryStore}</span>
           )}
         </div>
         {item.notes && (
-          <p className="text-xs text-amber-600 mt-0.5 italic">{item.notes}</p>
+          <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5 italic">{item.notes}</p>
         )}
       </div>
     </div>
