@@ -144,8 +144,11 @@ export default function App() {
   }, [contextMenu])
 
   async function toggleCheck(item) {
-    const updates = { checked: !item.checked }
-    if (!item.checked && item.pushed) {
+    const checking = !item.checked
+    const updates = { checked: checking }
+    // When checking off a pushed item, immediately revert it to its original
+    // store so it rests under its first store grouping.
+    if (checking && item.pushed) {
       updates.primaryStore = item.secondaryStore
       updates.secondaryStore = item.primaryStore
       updates.pushed = false
