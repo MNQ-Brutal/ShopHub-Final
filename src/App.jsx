@@ -20,7 +20,7 @@ const COLOR_OPTIONS = [
   { label: 'Gray',   swatch: 'bg-gray-300',    classes: 'bg-gray-100 text-gray-700' },
 ]
 
-const BLANK_FORM = { name: '', primaryStore: 'Walmart', category: 'Pantry', notes: '', secondaryStore: '', quantity: '' }
+const BLANK_FORM = { name: '', primaryStore: 'Walmart', category: 'Pantry', notes: '', secondaryStore: '', quantity: '', image: '' }
 const itemToForm = item => ({
   name: item.name,
   primaryStore: item.primaryStore,
@@ -28,7 +28,25 @@ const itemToForm = item => ({
   category: item.category,
   notes: item.notes || '',
   quantity: item.quantity || '',
+  image: item.image || '',
 })
+
+async function resizeImage(file, maxDim = 600) {
+  return new Promise(resolve => {
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.round(img.width * scale)
+      canvas.height = Math.round(img.height * scale)
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
+      resolve(canvas.toDataURL('image/jpeg', 0.75))
+    }
+    img.src = url
+  })
+}
 
 async function seedIfEmpty(db) {
   const snap = await getDocs(query(collection(db, 'items')))
@@ -190,6 +208,7 @@ export default function App() {
         category: form.category,
         notes: form.notes.trim() || null,
         quantity: form.quantity.trim() || null,
+        image: form.image || null,
       })
       setEditingItem(null)
     } else {
@@ -200,6 +219,7 @@ export default function App() {
         category: form.category,
         notes: form.notes.trim() || null,
         quantity: form.quantity.trim() || null,
+        image: form.image || null,
         active: true,
         checked: false,
       })
@@ -676,6 +696,36 @@ export default function App() {
                   className="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-800 dark:text-gray-100 bg-white dark:bg-gray-700 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-blue-400"
                 />
               </div>
+              <div>
+                <label className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-1 block">Photo (optional)</label>
+                <div className="flex items-center gap-3">
+                  <label className="cursor-pointer flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors">
+                    📷 {form.image ? 'Change' : 'Add Photo'}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      className="hidden"
+                      onChange={async e => {
+                        const file = e.target.files?.[0]
+                        if (file) {
+                          const resized = await resizeImage(file)
+                          setForm(f => ({ ...f, image: resized }))
+                        }
+                      }}
+                    />
+                  </label>
+                  {form.image && (
+                    <div className="relative">
+                      <img src={form.image} className="w-14 h-14 object-cover rounded-lg border border-gray-200 dark:border-gray-600" />
+                      <button
+                        className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-500 text-white rounded-full text-xs flex items-center justify-center leading-none"
+                        onClick={() => setForm(f => ({ ...f, image: '' }))}
+                      >×</button>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
             <div className="flex border-t border-gray-100 dark:border-gray-700">
               <button className="flex-1 py-3.5 text-sm text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors" onClick={() => { setShowAddForm(false); setEditingItem(null); setForm(BLANK_FORM) }}>
@@ -1037,6 +1087,7 @@ function ItemRow({ item, onToggle, onLongPress, onUpdateQuantity, checked = fals
   const [editingQty, setEditingQty] = useState(false)
   const [qtyValue, setQtyValue] = useState(item.quantity || '')
   const qtyInputRef = useRef(null)
+  const [viewingImage, setViewingImage] = useState(false)
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: item.id,
@@ -1163,6 +1214,23 @@ function ItemRow({ item, onToggle, onLongPress, onUpdateQuantity, checked = fals
           <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5 italic">{item.notes}</p>
         )}
       </div>
+      {item.image && (
+        <button
+          className="flex-shrink-0 ml-1"
+          onClick={e => { e.stopPropagation(); setViewingImage(true) }}
+          onTouchStart={e => { e.stopPropagation(); clearTimeout(longPressTimer.current) }}
+        >
+          <img src={item.image} className="w-10 h-10 object-cover rounded-lg border border-gray-200 dark:border-gray-600 opacity-80" />
+        </button>
+      )}
+      {viewingImage && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80"
+          onClick={() => setViewingImage(false)}
+        >
+          <img src={item.image} className="max-w-[90vw] max-h-[80vh] rounded-xl shadow-2xl object-contain" />
+        </div>
+      )}
     </div>
   )
 }
