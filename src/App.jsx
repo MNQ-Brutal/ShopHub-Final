@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { collection, onSnapshot, doc, updateDoc, deleteDoc, writeBatch, query, getDocs, addDoc, setDoc } from 'firebase/firestore'
+import { collection, onSnapshot, doc, updateDoc, deleteDoc, writeBatch, query, getDocs, addDoc, setDoc, runTransaction } from 'firebase/firestore'
 import { db } from './firebase'
 import { CATEGORIES, SEED_ITEMS, DEFAULT_STORES } from './seedData'
 import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors } from '@dnd-kit/core'
@@ -49,24 +49,31 @@ async function resizeImage(file, maxDim = 600) {
 }
 
 async function seedIfEmpty(db) {
-  const snap = await getDocs(query(collection(db, 'items')))
-  if (!snap.empty) return
-  const batch = writeBatch(db)
-  for (const item of SEED_ITEMS) {
-    const ref = doc(collection(db, 'items'))
-    batch.set(ref, { ...item, secondaryStore: item.secondaryStore || null, notes: item.notes || null })
-  }
-  await batch.commit()
+  const sentinelRef = doc(db, 'meta', 'items_seeded')
+  await runTransaction(db, async tx => {
+    const sentinel = await tx.get(sentinelRef)
+    if (sentinel.exists()) return
+    tx.set(sentinelRef, { seededAt: new Date().toISOString() })
+    for (const item of SEED_ITEMS) {
+      tx.set(doc(collection(db, 'items')), {
+        ...item,
+        secondaryStore: item.secondaryStore || null,
+        notes: item.notes || null,
+      })
+    }
+  })
 }
 
 async function seedStoresIfEmpty(db) {
-  const snap = await getDocs(query(collection(db, 'stores')))
-  if (!snap.empty) return
-  const batch = writeBatch(db)
-  for (const s of DEFAULT_STORES) {
-    batch.set(doc(collection(db, 'stores')), s)
-  }
-  await batch.commit()
+  const sentinelRef = doc(db, 'meta', 'stores_seeded')
+  await runTransaction(db, async tx => {
+    const sentinel = await tx.get(sentinelRef)
+    if (sentinel.exists()) return
+    tx.set(sentinelRef, { seededAt: new Date().toISOString() })
+    for (const s of DEFAULT_STORES) {
+      tx.set(doc(collection(db, 'stores')), s)
+    }
+  })
 }
 
 export default function App() {
