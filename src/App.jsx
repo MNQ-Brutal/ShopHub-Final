@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { collection, onSnapshot, doc, updateDoc, deleteDoc, writeBatch, query, getDocs, addDoc, setDoc, runTransaction } from 'firebase/firestore'
+import { collection, onSnapshot, doc, updateDoc, deleteDoc, writeBatch, query, getDocs, addDoc, setDoc } from 'firebase/firestore'
 import { db } from './firebase'
 import { CATEGORIES, SEED_ITEMS, DEFAULT_STORES } from './seedData'
 import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors } from '@dnd-kit/core'
@@ -48,33 +48,6 @@ async function resizeImage(file, maxDim = 600) {
   })
 }
 
-async function seedIfEmpty(db) {
-  const sentinelRef = doc(db, 'meta', 'items_seeded')
-  await runTransaction(db, async tx => {
-    const sentinel = await tx.get(sentinelRef)
-    if (sentinel.exists()) return
-    tx.set(sentinelRef, { seededAt: new Date().toISOString() })
-    for (const item of SEED_ITEMS) {
-      tx.set(doc(collection(db, 'items')), {
-        ...item,
-        secondaryStore: item.secondaryStore || null,
-        notes: item.notes || null,
-      })
-    }
-  })
-}
-
-async function seedStoresIfEmpty(db) {
-  const sentinelRef = doc(db, 'meta', 'stores_seeded')
-  await runTransaction(db, async tx => {
-    const sentinel = await tx.get(sentinelRef)
-    if (sentinel.exists()) return
-    tx.set(sentinelRef, { seededAt: new Date().toISOString() })
-    for (const s of DEFAULT_STORES) {
-      tx.set(doc(collection(db, 'stores')), s)
-    }
-  })
-}
 
 export default function App() {
   const sensors = useSensors(
@@ -129,23 +102,19 @@ export default function App() {
   const [activatedGroup, setActivatedGroup] = useState(null)
 
   useEffect(() => {
-    seedIfEmpty(db).catch(() => {}).then(() => {
-      const unsub = onSnapshot(collection(db, 'items'), (snap) => {
-        setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-        setItemsLoaded(true)
-      })
-      return unsub
+    const unsub = onSnapshot(collection(db, 'items'), (snap) => {
+      setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+      setItemsLoaded(true)
     })
+    return unsub
   }, [])
 
   useEffect(() => {
-    seedStoresIfEmpty(db).catch(() => {}).then(() => {
-      const unsub = onSnapshot(collection(db, 'stores'), (snap) => {
-        setStores(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.order - b.order))
-        setStoresLoaded(true)
-      })
-      return unsub
+    const unsub = onSnapshot(collection(db, 'stores'), (snap) => {
+      setStores(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.order - b.order))
+      setStoresLoaded(true)
     })
+    return unsub
   }, [])
 
   useEffect(() => {
