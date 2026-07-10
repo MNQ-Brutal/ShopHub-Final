@@ -129,7 +129,7 @@ export default function App() {
   const [activatedGroup, setActivatedGroup] = useState(null)
 
   useEffect(() => {
-    seedIfEmpty(db).then(() => {
+    seedIfEmpty(db).catch(() => {}).then(() => {
       const unsub = onSnapshot(collection(db, 'items'), (snap) => {
         setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })))
         setItemsLoaded(true)
@@ -139,7 +139,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    seedStoresIfEmpty(db).then(() => {
+    seedStoresIfEmpty(db).catch(() => {}).then(() => {
       const unsub = onSnapshot(collection(db, 'stores'), (snap) => {
         setStores(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.order - b.order))
         setStoresLoaded(true)
