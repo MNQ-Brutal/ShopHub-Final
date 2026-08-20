@@ -52,7 +52,7 @@ async function resizeImage(file, maxDim = 600) {
 export default function App() {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 5 } })
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 12 } })
   )
 
   const [items, setItems] = useState([])
@@ -1078,7 +1078,7 @@ function ItemRow({ item, onToggle, onLongPress, onUpdateQuantity, checked = fals
 
   function handleTouchStart(e) {
     const touch = e.touches[0]
-    longPressTimer.current = setTimeout(() => onLongPress(item, touch.clientX, touch.clientY), 600)
+    longPressTimer.current = setTimeout(() => onLongPress(item, touch.clientX, touch.clientY), 450)
   }
 
   function handleTouchEnd() {
@@ -1120,10 +1120,10 @@ function ItemRow({ item, onToggle, onLongPress, onUpdateQuantity, checked = fals
         <div
           {...attributes}
           {...listeners}
-          className="flex-shrink-0 text-gray-300 dark:text-gray-600 hover:text-gray-400 dark:hover:text-gray-400 cursor-grab active:cursor-grabbing touch-none"
+          className="flex-shrink-0 flex items-center justify-center w-11 h-11 -mx-1 text-gray-300 dark:text-gray-600 hover:text-gray-400 dark:hover:text-gray-400 cursor-grab active:cursor-grabbing touch-none"
           onTouchStart={e => { e.stopPropagation(); clearTimeout(longPressTimer.current) }}
         >
-          <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
+          <svg width="12" height="16" viewBox="0 0 10 14" fill="currentColor">
             <circle cx="3" cy="2.5" r="1.5"/><circle cx="7" cy="2.5" r="1.5"/>
             <circle cx="3" cy="7" r="1.5"/><circle cx="7" cy="7" r="1.5"/>
             <circle cx="3" cy="11.5" r="1.5"/><circle cx="7" cy="11.5" r="1.5"/>
@@ -1131,16 +1131,22 @@ function ItemRow({ item, onToggle, onLongPress, onUpdateQuantity, checked = fals
         </div>
       )}
       <div
-        className={`w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-colors cursor-pointer ${
-          checked ? 'bg-green-500 border-green-500' : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-400'
-        }`}
+        className="flex-shrink-0 flex items-center justify-center w-11 h-11 -mx-1 cursor-pointer"
         onClick={() => onToggle(item)}
+        onTouchStart={e => { e.stopPropagation(); clearTimeout(longPressTimer.current) }}
+        onTouchEnd={e => { e.stopPropagation(); onToggle(item) }}
+      >
+      <div
+        className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors pointer-events-none ${
+          checked ? 'bg-green-500 border-green-500' : 'border-gray-300 dark:border-gray-600'
+        }`}
       >
         {checked && (
           <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
           </svg>
         )}
+      </div>
       </div>
 
       {/* Quantity badge — tap to edit */}
